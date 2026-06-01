@@ -11,6 +11,7 @@ import {
   type AttendanceStatus,
   type Batch,
   type BatchStatus,
+  type BatchStatusCounts,
   type Certificate,
   type CreateUserRequest,
   type Course,
@@ -42,6 +43,7 @@ type ModalState =
   | { type: 'trainee'; item?: Trainee }
   | { type: 'traineeProfile'; item: Trainee }
   | { type: 'course'; item?: Course }
+  | { type: 'courseDetails'; item: Course }
   | { type: 'instructor'; item?: Instructor }
   | { type: 'batch'; item?: Batch }
   | { type: 'schedule'; item?: Schedule }
@@ -53,11 +55,17 @@ type ModalState =
   | null
 
 type TraineeSearchField = 'fullName' | 'phone' | 'nationalId'
+type CourseSearchField = 'code' | 'name'
 
 const traineeSearchFields: { value: TraineeSearchField; label: string }[] = [
   { value: 'fullName', label: 'Name' },
   { value: 'phone', label: 'Phone' },
   { value: 'nationalId', label: 'National ID' },
+]
+
+const courseSearchFields: { value: CourseSearchField; label: string }[] = [
+  { value: 'code', label: 'Code' },
+  { value: 'name', label: 'Name' },
 ]
 
 const navItems: { key: RouteKey; label: string; icon: string }[] = [
@@ -167,6 +175,65 @@ function normalizeTrainee(value: unknown): Trainee | null {
 
 function normalizeTrainees(value: unknown) {
   return arrayFrom<unknown>(value).map(normalizeTrainee).filter((item): item is Trainee => item !== null)
+}
+
+function normalizeCourse(value: unknown): Course | null {
+  const record = recordFrom(value)
+  const id = numberField(record, 'id', 'Id', 'courseId', 'CourseId')
+
+  if (!id) return null
+
+  return {
+    ...(record as Partial<Course>),
+    id,
+    code: stringField(record, 'code', 'Code'),
+    name: stringField(record, 'name', 'Name', 'courseName', 'CourseName'),
+    description: stringField(record, 'description', 'Description'),
+    durationHours: numberField(record, 'durationHours', 'DurationHours'),
+    status: (stringField(record, 'status', 'Status') || undefined) as Course['status'],
+    activeBatchesCount: numberFrom(record.activeBatchesCount ?? record.ActiveBatchesCount),
+  } as Course
+}
+
+function normalizeCourses(value: unknown) {
+  return arrayFrom<unknown>(value).map(normalizeCourse).filter((item): item is Course => item !== null)
+}
+
+function normalizeBatch(value: unknown): Batch | null {
+  const record = recordFrom(value)
+  const id = numberField(record, 'id', 'Id', 'batchId', 'BatchId')
+
+  if (!id) return null
+
+  return {
+    ...(record as Partial<Batch>),
+    id,
+    code: stringField(record, 'code', 'Code', 'batchCode', 'BatchCode'),
+    courseId: numberField(record, 'courseId', 'CourseId'),
+    courseName: stringField(record, 'courseName', 'CourseName'),
+    instructorId: numberField(record, 'instructorId', 'InstructorId'),
+    instructorName: stringField(record, 'instructorName', 'InstructorName'),
+    startDate: stringField(record, 'startDate', 'StartDate'),
+    endDate: stringField(record, 'endDate', 'EndDate'),
+    capacity: numberField(record, 'capacity', 'Capacity'),
+    status: (stringField(record, 'status', 'Status') || undefined) as Batch['status'],
+    enrolledCount: numberFrom(record.enrolledCount ?? record.EnrolledCount),
+  } as Batch
+}
+
+function normalizeBatches(value: unknown) {
+  return arrayFrom<unknown>(value).map(normalizeBatch).filter((item): item is Batch => item !== null)
+}
+
+function batchStatusCountsFrom(value: unknown): BatchStatusCounts {
+  const record = recordFrom(value)
+  return {
+    planned: numberFrom(record.planned ?? record.Planned),
+    active: numberFrom(record.active ?? record.Active),
+    completed: numberFrom(record.completed ?? record.Completed),
+    cancelled: numberFrom(record.cancelled ?? record.Cancelled),
+    total: numberFrom(record.total ?? record.Total),
+  }
 }
 
 function normalizeCertificate(value: unknown): Certificate | null {
@@ -328,6 +395,22 @@ function certificatePageFrom(value: unknown) {
   return {
     ...page,
     items: normalizeCertificates(value),
+  }
+}
+
+function coursePageFrom(value: unknown) {
+  const page = pagedFrom<Course>(value)
+  return {
+    ...page,
+    items: normalizeCourses(value),
+  }
+}
+
+function batchPageFrom(value: unknown) {
+  const page = pagedFrom<Batch>(value)
+  return {
+    ...page,
+    items: normalizeBatches(value),
   }
 }
 
@@ -607,7 +690,7 @@ function useReferenceData(refreshToken: number | string, enabled = true, kinds: 
     ]).then(([traineeResult, courseResult, instructorResult, batchResult]) => {
       if (!active) return
       setTrainees(traineeResult.status === 'fulfilled' ? normalizeTrainees(traineeResult.value) : [])
-      setCourses(courseResult.status === 'fulfilled' ? arrayFrom<Course>(courseResult.value) : [])
+      setCourses(courseResult.status === 'fulfilled' ? normalizeCourses(courseResult.value) : [])
       setInstructors(instructorResult.status === 'fulfilled' ? arrayFrom<Instructor>(instructorResult.value) : [])
       setBatches(batchResult.status === 'fulfilled' ? arrayFrom<Batch>(batchResult.value) : [])
       setError(
@@ -862,35 +945,81 @@ function TraineesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) 
 
 function CoursesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) => void; refreshToken: number }) {
   const [search, setSearch] = useState('')
+  const [searchField, setSearchField] = useState<CourseSearchField>('code')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
+  const [localRefreshToken, setLocalRefreshToken] = useState(0)
+  const [updatingCourseId, setUpdatingCourseId] = useState<number | null>(null)
+  const [statusError, setStatusError] = useState('')
   const { data, loading, error } = usePagedData(
-    () => api.courses.list({ search, status, page, pageSize: 20 }),
-    [search, status, page, refreshToken],
+    () => api.courses.list({ search, searchField, status, page, pageSize: 20 }).then(coursePageFrom),
+    [search, searchField, status, page, refreshToken, localRefreshToken],
   )
-  const remove = async (id: number) => {
-    if (!window.confirm('Delete this course?')) return
-    await api.courses.delete(id)
+
+  const updateSearch = (value: string) => {
+    setSearch(value)
     setPage(1)
+  }
+
+  const updateSearchField = (value: string) => {
+    setSearchField(value as CourseSearchField)
+    setPage(1)
+  }
+
+  const updateStatusFilter = (value: string) => {
+    setStatus(value)
+    setPage(1)
+  }
+
+  const updateStatus = async (item: Course, isActive: boolean) => {
+    const action = isActive ? 'activate' : 'deactivate'
+    if (!window.confirm(`Are you sure you want to ${action} ${item.name}?`)) return
+
+    setStatusError('')
+    setUpdatingCourseId(item.id)
+    try {
+      await api.courses.setStatus(item.id, isActive)
+      setLocalRefreshToken((value) => value + 1)
+    } catch (err) {
+      setStatusError((err as Error).message)
+    } finally {
+      setUpdatingCourseId(null)
+    }
   }
 
   return (
     <section className="panel">
-      <ListToolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} />
+      <ListToolbar
+        search={search}
+        onSearch={updateSearch}
+        searchPlaceholder={`Search by ${courseSearchFields.find((item) => item.value === searchField)?.label.toLowerCase()}`}
+        status={status}
+        onStatus={updateStatusFilter}
+        beforeSearch={
+          <Select value={searchField} onChange={updateSearchField} label="Search by" options={courseSearchFields} includeAllOption={false} />
+        }
+      />
       {error && <Alert tone="error" message={error} />}
+      {statusError && <Alert tone="error" message={statusError} />}
       <DataTable
         loading={loading}
         emptyText="No courses match the current filters."
-        columns={['Course', 'Description', 'Duration', 'Status', 'Actions']}
+        columns={['Code', 'Course', 'Description', 'Duration', 'Active Batches', 'Status', 'Actions']}
         rows={data.items.map((item) => [
+          <strong>{item.code}</strong>,
           <strong>{item.name}</strong>,
           item.description || '-',
           `${item.durationHours} hours`,
-          <StatusBadge value={item.status} />,
+          item.activeBatchesCount,
+          <StatusToggle
+            checked={item.status !== 'Inactive'}
+            disabled={updatingCourseId === item.id}
+            onChange={(checked) => void updateStatus(item, checked)}
+          />,
           <RowActions
             actions={[
+              { label: 'Details', onClick: () => onModal({ type: 'courseDetails', item }) },
               { label: 'Edit', onClick: () => onModal({ type: 'course', item }) },
-              { label: 'Delete', danger: true, onClick: () => void remove(item.id) },
             ]}
           />,
         ])}
@@ -1391,6 +1520,7 @@ function ModalContent({
         )}
         {modal.type === 'batchTrainees' && <BatchTraineesManager batch={modal.item} allTrainees={refs.trainees} />}
         {modal.type === 'traineeProfile' && <TraineeProfile trainee={modal.item} />}
+        {modal.type === 'courseDetails' && <CourseDetails course={modal.item} />}
         {modal.type === 'traineeHistory' && <TraineeHistory trainee={modal.item} tab={modal.tab} />}
       </section>
     </div>
@@ -1400,6 +1530,7 @@ function ModalContent({
 function modalTitle(modal: Exclude<ModalState, null>) {
   if (modal.type === 'batchTrainees') return `Manage ${modal.item.code}`
   if (modal.type === 'traineeProfile') return `${personName(modal.item)} profile`
+  if (modal.type === 'courseDetails') return `${modal.item.code} details`
   if (modal.type === 'traineeHistory') return `${personName(modal.item)} history`
   if (modal.type === 'certificate') return 'Generate certificate'
   if (modal.type === 'user') return modal.item ? 'Edit user' : 'Create user'
@@ -1454,6 +1585,7 @@ function CourseForm({ item, onSubmit }: { item?: Course; onSubmit: (body: Partia
       submitLabel={item ? 'Save course' : 'Create course'}
       onSubmit={(data) =>
         onSubmit({
+          code: String(data.get('code')),
           name: String(data.get('name')),
           description: String(data.get('description')),
           durationHours: Number(data.get('durationHours')),
@@ -1461,6 +1593,7 @@ function CourseForm({ item, onSubmit }: { item?: Course; onSubmit: (body: Partia
         })
       }
     >
+      <TextField name="code" label="Course code" defaultValue={item?.code} required />
       <TextField name="name" label="Course name" defaultValue={item?.name} required />
       <TextField name="description" label="Description" defaultValue={item?.description} />
       <TextField name="durationHours" label="Duration hours" type="number" defaultValue={item?.durationHours ?? 24} required />
@@ -1797,6 +1930,86 @@ function BatchTraineesManager({ batch, allTrainees }: { batch: Batch; allTrainee
           </button>,
         ])}
       />
+    </div>
+  )
+}
+
+function CourseDetails({ course: initialCourse }: { course: Course }) {
+  const [course, setCourse] = useState<Course>(initialCourse)
+  const [batches, setBatches] = useState<PagedResult<Batch>>(blankPage())
+  const [counts, setCounts] = useState<BatchStatusCounts>(() => batchStatusCountsFrom(undefined))
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const details = [
+    { label: 'Code', value: course.code },
+    { label: 'Name', value: course.name },
+    { label: 'Description', value: course.description || '-' },
+    { label: 'Duration', value: `${course.durationHours} hours` },
+    { label: 'Active batches', value: course.activeBatchesCount },
+  ]
+
+  useEffect(() => {
+    setLoading(true)
+    setError('')
+    setCourse(initialCourse)
+    Promise.all([
+      api.courses.get(initialCourse.id),
+      api.batches.list({ courseId: initialCourse.id, page: 1, pageSize: 100 }),
+      api.batches.statusCounts({ courseId: initialCourse.id }),
+    ])
+      .then(([courseResult, batchResult, countResult]) => {
+        setCourse(normalizeCourse(courseResult) ?? initialCourse)
+        setBatches(batchPageFrom(batchResult))
+        setCounts(batchStatusCountsFrom(countResult))
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [initialCourse])
+
+  return (
+    <div className="profile-view">
+      <div className="profile-heading">
+        <div>
+          <span className="profile-avatar">{course.code.slice(0, 2).toUpperCase()}</span>
+        </div>
+        <div>
+          <h3>{course.name}</h3>
+          <p>{course.code}</p>
+        </div>
+        <StatusBadge value={course.status} />
+      </div>
+      <dl className="detail-list">
+        {details.map((detail) => (
+          <div key={detail.label}>
+            <dt>{detail.label}</dt>
+            <dd>{detail.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {error && <Alert tone="error" message={error} />}
+      <section className="metric-grid">
+        <Metric title="Planned" value={counts.planned} hint="Batches" loading={loading} />
+        <Metric title="Active" value={counts.active} hint="Batches" loading={loading} />
+        <Metric title="Completed" value={counts.completed} hint="Batches" loading={loading} />
+        <Metric title="Cancelled" value={counts.cancelled} hint="Batches" loading={loading} />
+        <Metric title="Total" value={counts.total} hint="All linked batches" loading={loading} />
+      </section>
+      <section className="profile-section">
+        <h3>Linked batches</h3>
+        <DataTable
+          loading={loading}
+          emptyText="No batches are linked to this course."
+          columns={['Batch', 'Instructor', 'Dates', 'Capacity', 'Enrolled', 'Status']}
+          rows={batches.items.map((item) => [
+            <strong>{item.code}</strong>,
+            item.instructorName || '-',
+            `${formatDate(item.startDate)} - ${formatDate(item.endDate)}`,
+            item.capacity,
+            item.enrolledCount,
+            <StatusBadge value={item.status} />,
+          ])}
+        />
+      </section>
     </div>
   )
 }

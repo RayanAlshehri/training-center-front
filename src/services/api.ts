@@ -3,6 +3,7 @@ import type {
   AttendanceStatus,
   AttendanceSummary,
   Batch,
+  BatchStatusCounts,
   Certificate,
   CreateTenantRequest,
   CreateUserRequest,
@@ -77,11 +78,18 @@ export const api = {
   },
   courses: {
     list: (params: QueryParams) => request<PagedResult<Course>>(`/api/Courses${toQuery(params)}`),
+    get: (id: number) => request<Course>(`/api/Courses/${id}`),
     create: (body: Partial<Course>) => request<Course>('/api/Courses', json(body)),
     update: (id: number, body: Partial<Course>) => request<Course>(`/api/Courses/${id}`, putJson(body)),
+    setStatus: (id: number, status: boolean) =>
+      request<void>(`/api/Courses/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
     delete: (id: number) => request<void>(`/api/Courses/${id}`, { method: 'DELETE' }),
   },
   batches: {
+    statusCounts: (params?: QueryParams) => request<BatchStatusCounts>(`/api/Batches/status-counts${toQuery(params)}`),
     list: (params: QueryParams) => request<PagedResult<Batch>>(`/api/batches${toQuery(params)}`),
     create: (body: Partial<Batch>) => request<Batch>('/api/batches', json(body)),
     update: (id: number, body: Partial<Batch>) => request<Batch>(`/api/batches/${id}`, putJson(body)),

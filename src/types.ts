@@ -61,11 +61,13 @@ export interface Instructor {
 
 export interface Course {
   id: number
+  code: string
   name: string
   Name?: string
   description: string
   durationHours: number
   status: EntityStatus
+  activeBatchesCount: number
 }
 
 export interface Batch {
@@ -80,6 +82,14 @@ export interface Batch {
   capacity: number
   status: BatchStatus
   enrolledCount: number
+}
+
+export interface BatchStatusCounts {
+  planned: number
+  active: number
+  completed: number
+  cancelled: number
+  total: number
 }
 
 export interface Schedule {
