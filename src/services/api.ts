@@ -58,6 +58,11 @@ export const api = {
     get: (id: number) => request<Trainee>(`/api/trainees/${id}`),
     create: (body: Partial<Trainee>) => request<Trainee>('/api/trainees', json(body)),
     update: (id: number, body: Partial<Trainee>) => request<Trainee>(`/api/trainees/${id}`, putJson(body)),
+    setStatus: (id: number, status: boolean) =>
+      request<void>(`/api/trainees/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
     delete: (id: number) => request<void>(`/api/trainees/${id}`, { method: 'DELETE' }),
     attendance: (id: number, params: QueryParams) =>
       request<PagedResult<AttendanceRecord>>(`/api/trainees/${id}/attendance${toQuery(params)}`),

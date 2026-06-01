@@ -40,6 +40,7 @@ type RouteKey =
 
 type ModalState =
   | { type: 'trainee'; item?: Trainee }
+  | { type: 'traineeProfile'; item: Trainee }
   | { type: 'course'; item?: Course }
   | { type: 'instructor'; item?: Instructor }
   | { type: 'batch'; item?: Batch }
@@ -50,6 +51,14 @@ type ModalState =
   | { type: 'batchTrainees'; item: Batch }
   | { type: 'traineeHistory'; item: Trainee; tab: 'attendance' | 'certificates' }
   | null
+
+type TraineeSearchField = 'fullName' | 'phone' | 'nationalId'
+
+const traineeSearchFields: { value: TraineeSearchField; label: string }[] = [
+  { value: 'fullName', label: 'Name' },
+  { value: 'phone', label: 'Phone' },
+  { value: 'nationalId', label: 'National ID' },
+]
 
 const navItems: { key: RouteKey; label: string; icon: string }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -736,23 +745,94 @@ function Metric({
 
 function TraineesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) => void; refreshToken: number }) {
   const [search, setSearch] = useState('')
+  const [searchField, setSearchField] = useState<TraineeSearchField>('fullName')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
+  const [localRefreshToken, setLocalRefreshToken] = useState(0)
+  const [updatingTraineeId, setUpdatingTraineeId] = useState<number | null>(null)
+  const [loadingEditTraineeId, setLoadingEditTraineeId] = useState<number | null>(null)
+  const [loadingProfileTraineeId, setLoadingProfileTraineeId] = useState<number | null>(null)
+  const [statusError, setStatusError] = useState('')
   const { data, loading, error } = usePagedData(
-    () => api.trainees.list({ search, status, page, pageSize: 20 }),
-    [search, status, page, refreshToken],
+    () => api.trainees.list({ search, searchField, status, page, pageSize: 20 }),
+    [search, searchField, status, page, refreshToken, localRefreshToken],
   )
 
-  const remove = async (id: number) => {
-    if (!window.confirm('Delete this trainee?')) return
-    await api.trainees.delete(id)
+  const updateSearch = (value: string) => {
+    setSearch(value)
     setPage(1)
+  }
+
+  const updateSearchField = (value: string) => {
+    setSearchField(value as TraineeSearchField)
+    setPage(1)
+  }
+
+  const updateStatusFilter = (value: string) => {
+    setStatus(value)
+    setPage(1)
+  }
+
+  const updateStatus = async (item: Trainee, isActive: boolean) => {
+    const action = isActive ? 'activate' : 'deactivate'
+    if (!window.confirm(`Are you sure you want to ${action} ${personName(item)}?`)) return
+
+    setStatusError('')
+    setUpdatingTraineeId(item.id)
+    try {
+      await api.trainees.setStatus(item.id, isActive)
+      setLocalRefreshToken((value) => value + 1)
+    } catch (err) {
+      setStatusError((err as Error).message)
+    } finally {
+      setUpdatingTraineeId(null)
+    }
+  }
+
+  const editTrainee = async (item: Trainee) => {
+    if (loadingEditTraineeId || loadingProfileTraineeId) return
+
+    setStatusError('')
+    setLoadingEditTraineeId(item.id)
+    try {
+      const trainee = await api.trainees.get(item.id)
+      onModal({ type: 'trainee', item: normalizeTrainee(trainee) ?? trainee })
+    } catch (err) {
+      setStatusError((err as Error).message)
+    } finally {
+      setLoadingEditTraineeId(null)
+    }
+  }
+
+  const viewProfile = async (item: Trainee) => {
+    if (loadingEditTraineeId || loadingProfileTraineeId) return
+
+    setStatusError('')
+    setLoadingProfileTraineeId(item.id)
+    try {
+      const trainee = await api.trainees.get(item.id)
+      onModal({ type: 'traineeProfile', item: normalizeTrainee(trainee) ?? trainee })
+    } catch (err) {
+      setStatusError((err as Error).message)
+    } finally {
+      setLoadingProfileTraineeId(null)
+    }
   }
 
   return (
     <section className="panel">
-      <ListToolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} />
+      <ListToolbar
+        search={search}
+        onSearch={updateSearch}
+        searchPlaceholder={`Search by ${traineeSearchFields.find((item) => item.value === searchField)?.label.toLowerCase()}`}
+        status={status}
+        onStatus={updateStatusFilter}
+        beforeSearch={
+          <Select value={searchField} onChange={updateSearchField} label="Search by" options={traineeSearchFields} includeAllOption={false} />
+        }
+      />
       {error && <Alert tone="error" message={error} />}
+      {statusError && <Alert tone="error" message={statusError} />}
       <DataTable
         loading={loading}
         emptyText="No trainees match the current filters."
@@ -762,13 +842,15 @@ function TraineesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) 
           item.phone,
           item.nationalId ?? '-',
           formatDate(item.registrationDate),
-          <StatusBadge value={item.status} />,
+          <StatusToggle
+            checked={item.status !== 'Inactive'}
+            disabled={updatingTraineeId === item.id}
+            onChange={(checked) => void updateStatus(item, checked)}
+          />,
           <RowActions
             actions={[
-              { label: 'Edit', onClick: () => onModal({ type: 'trainee', item }) },
-              { label: 'Attendance', onClick: () => onModal({ type: 'traineeHistory', item, tab: 'attendance' }) },
-              { label: 'Certificates', onClick: () => onModal({ type: 'traineeHistory', item, tab: 'certificates' }) },
-              { label: 'Delete', danger: true, onClick: () => void remove(item.id) },
+              { label: loadingProfileTraineeId === item.id ? 'Loading...' : 'Profile', onClick: () => void viewProfile(item) },
+              { label: loadingEditTraineeId === item.id ? 'Loading...' : 'Edit', onClick: () => void editTrainee(item) },
             ]}
           />,
         ])}
@@ -1308,6 +1390,7 @@ function ModalContent({
           />
         )}
         {modal.type === 'batchTrainees' && <BatchTraineesManager batch={modal.item} allTrainees={refs.trainees} />}
+        {modal.type === 'traineeProfile' && <TraineeProfile trainee={modal.item} />}
         {modal.type === 'traineeHistory' && <TraineeHistory trainee={modal.item} tab={modal.tab} />}
       </section>
     </div>
@@ -1316,6 +1399,7 @@ function ModalContent({
 
 function modalTitle(modal: Exclude<ModalState, null>) {
   if (modal.type === 'batchTrainees') return `Manage ${modal.item.code}`
+  if (modal.type === 'traineeProfile') return `${personName(modal.item)} profile`
   if (modal.type === 'traineeHistory') return `${personName(modal.item)} history`
   if (modal.type === 'certificate') return 'Generate certificate'
   if (modal.type === 'user') return modal.item ? 'Edit user' : 'Create user'
@@ -1344,7 +1428,7 @@ function TraineeForm({ item, onSubmit }: { item?: Trainee; onSubmit: (body: Part
           email: nullable(data.get('email')),
           nationalId: nullable(data.get('nationalId')),
           registrationDate: String(data.get('registrationDate')),
-          status: String(data.get('status')) as EntityStatus,
+          status: data.get('isActive') === 'on' ? 'Active' : 'Inactive',
         })
       }
     >
@@ -1354,7 +1438,12 @@ function TraineeForm({ item, onSubmit }: { item?: Trainee; onSubmit: (body: Part
       <TextField name="email" label="Email" type="email" defaultValue={item?.email ?? ''} />
       <TextField name="nationalId" label="National ID" defaultValue={item?.nationalId ?? ''} />
       <TextField name="registrationDate" label="Registration date" type="date" defaultValue={dateValue(item?.registrationDate) || today()} required />
-      <SelectField name="status" label="Status" defaultValue={item?.status ?? 'Active'} options={entityStatuses} />
+      <Field label="Status">
+        <span className="checkbox-control">
+          <input name="isActive" type="checkbox" defaultChecked={item?.status !== 'Inactive'} />
+          Active
+        </span>
+      </Field>
     </RecordForm>
   )
 }
@@ -1712,6 +1801,75 @@ function BatchTraineesManager({ batch, allTrainees }: { batch: Batch; allTrainee
   )
 }
 
+function TraineeProfile({ trainee }: { trainee: Trainee }) {
+  const [attendance, setAttendance] = useState<PagedResult<AttendanceRecord>>(blankPage())
+  const [certificates, setCertificates] = useState<Certificate[]>([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const details = [
+    { label: 'First name', value: firstName(trainee) },
+    { label: 'Last name', value: lastName(trainee) },
+    { label: 'Phone', value: trainee.phone },
+    { label: 'Email', value: trainee.email || '-' },
+    { label: 'National ID', value: trainee.nationalId || '-' },
+    { label: 'Registration date', value: formatDate(trainee.registrationDate) },
+  ]
+
+  useEffect(() => {
+    setLoading(true)
+    setError('')
+    Promise.all([api.trainees.attendance(trainee.id, { page: 1, pageSize: 20 }), api.trainees.certificates(trainee.id)])
+      .then(([attendanceResult, certificateResult]) => {
+        setAttendance(pagedFrom<AttendanceRecord>(attendanceResult))
+        setCertificates(normalizeCertificates(certificateResult))
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [trainee.id])
+
+  return (
+    <div className="profile-view">
+      <div className="profile-heading">
+        <div>
+          <span className="profile-avatar">{initialsFor(trainee)}</span>
+        </div>
+        <div>
+          <h3>{personName(trainee)}</h3>
+          <p>{trainee.phone}</p>
+        </div>
+        <StatusBadge value={trainee.status} />
+      </div>
+      <dl className="detail-list">
+        {details.map((detail) => (
+          <div key={detail.label}>
+            <dt>{detail.label}</dt>
+            <dd>{detail.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {error && <Alert tone="error" message={error} />}
+      <section className="profile-section">
+        <h3>Attendance</h3>
+        <DataTable
+          loading={loading}
+          emptyText="No attendance records found."
+          columns={['Batch', 'Date', 'Status']}
+          rows={attendance.items.map((item) => [item.batchCode, formatDate(item.date), <StatusBadge value={item.status} />])}
+        />
+      </section>
+      <section className="profile-section">
+        <h3>Certificates</h3>
+        <DataTable
+          loading={loading}
+          emptyText="No certificates found."
+          columns={['Certificate', 'Course', 'Batch', 'Issued']}
+          rows={certificates.map((item) => [item.certificateNumber || '-', item.courseName || '-', item.batchCode || '-', formatDate(item.issueDate)])}
+        />
+      </section>
+    </div>
+  )
+}
+
 function TraineeHistory({ trainee, tab }: { trainee: Trainee; tab: 'attendance' | 'certificates' }) {
   const [attendance, setAttendance] = useState<PagedResult<AttendanceRecord>>(blankPage())
   const [certificates, setCertificates] = useState<Certificate[]>([])
@@ -1755,6 +1913,8 @@ function TraineeHistory({ trainee, tab }: { trainee: Trainee; tab: 'attendance' 
 function ListToolbar({
   search,
   onSearch,
+  searchPlaceholder = 'Search records',
+  beforeSearch,
   status,
   onStatus,
   statuses = entityStatuses,
@@ -1762,6 +1922,8 @@ function ListToolbar({
 }: {
   search: string
   onSearch: (value: string) => void
+  searchPlaceholder?: string
+  beforeSearch?: React.ReactNode
   status: string
   onStatus: (value: string) => void
   statuses?: string[]
@@ -1769,18 +1931,27 @@ function ListToolbar({
 }) {
   return (
     <div className="toolbar">
-      <SearchInput value={search} onChange={onSearch} />
+      {beforeSearch}
+      <SearchInput value={search} onChange={onSearch} placeholder={searchPlaceholder} />
       <Select value={status} onChange={onStatus} label="Status" options={statuses.map((item) => ({ value: item, label: item }))} />
       {children}
     </div>
   )
 }
 
-function SearchInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function SearchInput({
+  value,
+  onChange,
+  placeholder = 'Search records',
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
   return (
     <label className="control search-control">
       <span>Search</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder="Search records" />
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
     </label>
   )
 }
@@ -1790,17 +1961,19 @@ function Select({
   onChange,
   label,
   options,
+  includeAllOption = true,
 }: {
   value: string | number
   onChange: (value: string) => void
   label: string
   options: { value: string | number; label: string }[]
+  includeAllOption?: boolean
 }) {
   return (
     <label className="control">
       <span>{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">All</option>
+        {includeAllOption && <option value="">All</option>}
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -1942,6 +2115,32 @@ function StatusBadge({ value }: { value?: string | null }) {
   return <span className={`status-badge status-${label.toLowerCase()}`}>{label}</span>
 }
 
+function StatusToggle({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean
+  disabled?: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <button
+      className={`status-switch${checked ? ' active' : ''}`}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="status-switch-track">
+        <span className="status-switch-thumb" />
+      </span>
+      <span className="sr-only">{checked ? 'Active' : 'Inactive'}</span>
+    </button>
+  )
+}
+
 function RowActions({
   actions,
 }: {
@@ -2056,12 +2255,33 @@ function personName(item: Trainee | Instructor) {
   )
 }
 
+function initialsFor(item: Trainee | Instructor) {
+  const first = firstName(item)
+  const last = lastName(item)
+  const initials = [first, last].filter(Boolean).map((part) => part[0]).join('')
+  return initials || personName(item).slice(0, 1)
+}
+
 function firstName(item: Trainee | Instructor) {
-  return item.FisrtName ?? item.fisrtName ?? item.FirstName ?? item.firstName ?? ''
+  const direct = item.FisrtName ?? item.fisrtName ?? item.FirstName ?? item.firstName
+  if (direct) return direct
+  const [first] = splitFullName(item)
+  return first
 }
 
 function lastName(item: Trainee | Instructor) {
-  return item.LastName ?? item.lastName ?? ''
+  const direct = item.LastName ?? item.lastName
+  if (direct) return direct
+  const [, last] = splitFullName(item)
+  return last
+}
+
+function splitFullName(item: Trainee | Instructor) {
+  const record = recordFrom(item)
+  const fullName = stringField(record, 'fullName', 'FullName', 'traineeName', 'TraineeName', 'instructorName', 'InstructorName')
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+  if (parts.length <= 1) return [fullName, '']
+  return [parts.slice(0, -1).join(' '), parts.at(-1) ?? '']
 }
 
 function optionFromCode(item: Batch) {
