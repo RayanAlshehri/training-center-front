@@ -56,6 +56,7 @@ type ModalState =
 
 type TraineeSearchField = 'fullName' | 'phone' | 'nationalId'
 type CourseSearchField = 'code' | 'name'
+type InstructorSearchField = 'fullName' | 'phone'
 
 const traineeSearchFields: { value: TraineeSearchField; label: string }[] = [
   { value: 'fullName', label: 'Name' },
@@ -66,6 +67,11 @@ const traineeSearchFields: { value: TraineeSearchField; label: string }[] = [
 const courseSearchFields: { value: CourseSearchField; label: string }[] = [
   { value: 'code', label: 'Code' },
   { value: 'name', label: 'Name' },
+]
+
+const instructorSearchFields: { value: InstructorSearchField; label: string }[] = [
+  { value: 'fullName', label: 'Name' },
+  { value: 'phone', label: 'Phone' },
 ]
 
 const navItems: { key: RouteKey; label: string; icon: string }[] = [
@@ -1031,22 +1037,62 @@ function CoursesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) =
 
 function InstructorsPage({ onModal, refreshToken }: { onModal: (modal: ModalState) => void; refreshToken: number }) {
   const [search, setSearch] = useState('')
+  const [searchField, setSearchField] = useState<InstructorSearchField>('fullName')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
+  const [localRefreshToken, setLocalRefreshToken] = useState(0)
+  const [updatingInstructorId, setUpdatingInstructorId] = useState<number | null>(null)
+  const [statusError, setStatusError] = useState('')
   const { data, loading, error } = usePagedData(
-    () => api.instructors.list({ search, status, page, pageSize: 20 }),
-    [search, status, page, refreshToken],
+    () => api.instructors.list({ search, searchField, status, page, pageSize: 20 }),
+    [search, searchField, status, page, refreshToken, localRefreshToken],
   )
-  const remove = async (id: number) => {
-    if (!window.confirm('Delete this instructor?')) return
-    await api.instructors.delete(id)
+
+  const updateSearch = (value: string) => {
+    setSearch(value)
     setPage(1)
+  }
+
+  const updateSearchField = (value: string) => {
+    setSearchField(value as InstructorSearchField)
+    setPage(1)
+  }
+
+  const updateStatusFilter = (value: string) => {
+    setStatus(value)
+    setPage(1)
+  }
+
+  const updateStatus = async (item: Instructor, isActive: boolean) => {
+    const action = isActive ? 'activate' : 'deactivate'
+    if (!window.confirm(`Are you sure you want to ${action} ${personName(item)}?`)) return
+
+    setStatusError('')
+    setUpdatingInstructorId(item.id)
+    try {
+      await api.instructors.setStatus(item.id, isActive)
+      setLocalRefreshToken((value) => value + 1)
+    } catch (err) {
+      setStatusError((err as Error).message)
+    } finally {
+      setUpdatingInstructorId(null)
+    }
   }
 
   return (
     <section className="panel">
-      <ListToolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} />
+      <ListToolbar
+        search={search}
+        onSearch={updateSearch}
+        searchPlaceholder={`Search by ${instructorSearchFields.find((item) => item.value === searchField)?.label.toLowerCase()}`}
+        status={status}
+        onStatus={updateStatusFilter}
+        beforeSearch={
+          <Select value={searchField} onChange={updateSearchField} label="Search by" options={instructorSearchFields} includeAllOption={false} />
+        }
+      />
       {error && <Alert tone="error" message={error} />}
+      {statusError && <Alert tone="error" message={statusError} />}
       <DataTable
         loading={loading}
         emptyText="No instructors match the current filters."
@@ -1055,11 +1101,14 @@ function InstructorsPage({ onModal, refreshToken }: { onModal: (modal: ModalStat
           <strong>{personName(item)}</strong>,
           item.phone,
           item.email ?? '-',
-          <StatusBadge value={item.status} />,
+          <StatusToggle
+            checked={item.status !== 'Inactive'}
+            disabled={updatingInstructorId === item.id}
+            onChange={(checked) => void updateStatus(item, checked)}
+          />,
           <RowActions
             actions={[
               { label: 'Edit', onClick: () => onModal({ type: 'instructor', item }) },
-              { label: 'Delete', danger: true, onClick: () => void remove(item.id) },
             ]}
           />,
         ])}
@@ -1077,24 +1126,47 @@ function BatchesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) =
   const [instructorId, setInstructorId] = useState('')
   const [page, setPage] = useState(1)
   const { data, loading, error } = usePagedData(
-    () => api.batches.list({ search, status, courseId, instructorId, page, pageSize: 20 }),
+    () => api.batches.list({ search, searchField: 'code', status, courseId, instructorId, page, pageSize: 20 }),
     [search, status, courseId, instructorId, page, refreshToken],
   )
-  const remove = async (id: number) => {
-    if (!window.confirm('Delete this batch?')) return
-    await api.batches.delete(id)
+
+  const updateSearch = (value: string) => {
+    setSearch(value)
+    setPage(1)
+  }
+
+  const updateStatusFilter = (value: string) => {
+    setStatus(value)
+    setPage(1)
+  }
+
+  const updateCourseFilter = (value: string) => {
+    setCourseId(value)
+    setPage(1)
+  }
+
+  const updateInstructorFilter = (value: string) => {
+    setInstructorId(value)
     setPage(1)
   }
 
   return (
     <section className="panel">
-      <ListToolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} statuses={batchStatuses}>
-        <Select value={courseId} onChange={setCourseId} label="Course" options={refs.courses.map(optionFromName)} />
-        <Select
+      <ListToolbar
+        search={search}
+        onSearch={updateSearch}
+        searchPlaceholder="Search by batch code"
+        status={status}
+        onStatus={updateStatusFilter}
+        statuses={batchStatuses}
+      >
+        <Combobox value={courseId} onChange={updateCourseFilter} label="Course" options={refs.courses.map(optionFromName)} allLabel="All courses" />
+        <Combobox
           value={instructorId}
-          onChange={setInstructorId}
+          onChange={updateInstructorFilter}
           label="Instructor"
           options={refs.instructors.map(optionFromPersonName)}
+          allLabel="All instructors"
         />
       </ListToolbar>
       {error && <Alert tone="error" message={error} />}
@@ -1114,7 +1186,6 @@ function BatchesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) =
             actions={[
               { label: 'Manage', onClick: () => onModal({ type: 'batchTrainees', item }) },
               { label: 'Edit', onClick: () => onModal({ type: 'batch', item }) },
-              { label: 'Delete', danger: true, onClick: () => void remove(item.id) },
             ]}
           />,
         ])}
@@ -2194,6 +2265,107 @@ function Select({
         ))}
       </select>
     </label>
+  )
+}
+
+function Combobox({
+  value,
+  onChange,
+  label,
+  options,
+  allLabel = 'All',
+  placeholder,
+}: {
+  value: string | number
+  onChange: (value: string) => void
+  label: string
+  options: { value: string | number; label: string }[]
+  allLabel?: string
+  placeholder?: string
+}) {
+  const selected = options.find((option) => String(option.value) === String(value))
+  const [query, setQuery] = useState(selected?.label ?? '')
+  const [open, setOpen] = useState(false)
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredOptions = useMemo(
+    () =>
+      normalizedQuery
+        ? options.filter((option) => option.label.toLowerCase().includes(normalizedQuery))
+        : options,
+    [normalizedQuery, options],
+  )
+  const visibleOptions = filteredOptions.slice(0, 20)
+
+  useEffect(() => {
+    if (!open) setQuery(selected?.label ?? '')
+  }, [open, selected?.label])
+
+  const chooseOption = (option: { value: string | number; label: string }) => {
+    onChange(String(option.value))
+    setQuery(option.label)
+    setOpen(false)
+  }
+
+  const clearSelection = () => {
+    onChange('')
+    setQuery('')
+    setOpen(true)
+  }
+
+  return (
+    <div className="control combobox-control">
+      <span>{label}</span>
+      <div className="combobox" onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
+        <div className="combobox-input-wrap">
+          <input
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              if (value) onChange('')
+              setOpen(true)
+            }}
+            onFocus={() => setOpen(true)}
+            placeholder={placeholder ?? allLabel}
+            aria-label={label}
+            aria-expanded={open}
+            role="combobox"
+          />
+          {value && (
+            <button
+              type="button"
+              className="combobox-clear"
+              aria-label={`Clear ${label}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={clearSelection}
+            >
+              x
+            </button>
+          )}
+        </div>
+        {open && (
+          <div className="combobox-menu" role="listbox">
+            <button type="button" className={!value ? 'active' : ''} onMouseDown={(event) => event.preventDefault()} onClick={clearSelection}>
+              {allLabel}
+            </button>
+            {visibleOptions.map((option) => (
+              <button
+                type="button"
+                key={option.value}
+                className={String(option.value) === String(value) ? 'active' : ''}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseOption(option)}
+              >
+                {option.label}
+              </button>
+            ))}
+            {filteredOptions.length === 0 && <div className="combobox-empty">No matches</div>}
+            {filteredOptions.length > visibleOptions.length && (
+              <div className="combobox-empty">Keep typing to narrow {filteredOptions.length} matches</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 

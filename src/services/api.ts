@@ -74,6 +74,11 @@ export const api = {
     create: (body: Partial<Instructor>) => request<Instructor>('/api/Instructors', json(body)),
     update: (id: number, body: Partial<Instructor>) =>
       request<Instructor>(`/api/Instructors/${id}`, putJson(body)),
+    setStatus: (id: number, status: boolean) =>
+      request<void>(`/api/Instructors/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
     delete: (id: number) => request<void>(`/api/Instructors/${id}`, { method: 'DELETE' }),
   },
   courses: {
