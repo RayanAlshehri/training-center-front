@@ -6,7 +6,9 @@ import {
   attendanceStatuses,
   batchStatuses,
   daysOfWeek,
+  deliveryModes,
   entityStatuses,
+  scheduleStatuses,
   type AttendanceRecord,
   type AttendanceStatus,
   type Batch,
@@ -16,10 +18,12 @@ import {
   type CreateUserRequest,
   type Course,
   type DayOfWeek,
+  type DeliveryMode,
   type EntityStatus,
   type Instructor,
   type PagedResult,
   type Schedule,
+  type ScheduleStatus,
   type Tenant,
   type TodaysClass,
   type Trainee,
@@ -229,6 +233,71 @@ function normalizeBatch(value: unknown): Batch | null {
 
 function normalizeBatches(value: unknown) {
   return arrayFrom<unknown>(value).map(normalizeBatch).filter((item): item is Batch => item !== null)
+}
+
+function normalizeSchedule(value: unknown): Schedule | null {
+  const record = recordFrom(value)
+  const scheduleId = numberField(record, 'scheduleId', 'ScheduleId', 'id', 'Id')
+
+  if (!scheduleId) return null
+
+  return {
+    ...(record as Partial<Schedule>),
+    id: scheduleId,
+    scheduleId,
+    batchId: numberField(record, 'batchId', 'BatchId'),
+    batchCode: stringField(record, 'batchCode', 'BatchCode'),
+    courseName: stringField(record, 'courseName', 'CourseName'),
+    instructorId: numberField(record, 'instructorId', 'InstructorId'),
+    instructorName: stringField(record, 'instructorName', 'InstructorName'),
+    dayOfWeek: (stringField(record, 'dayOfWeek', 'DayOfWeek') || undefined) as Schedule['dayOfWeek'],
+    startTime: stringField(record, 'startTime', 'StartTime'),
+    endTime: stringField(record, 'endTime', 'EndTime'),
+    room: stringField(record, 'room', 'Room') || null,
+    deliveryMode: (stringField(record, 'deliveryMode', 'DeliveryMode') || 'InPerson') as DeliveryMode,
+    status: (stringField(record, 'status', 'Status') || 'Active') as ScheduleStatus,
+    notes: stringField(record, 'notes', 'Notes') || null,
+  } as Schedule
+}
+
+function schedulePageFrom(value: unknown): PagedResult<Schedule> {
+  const page = pagedFrom<unknown>(value)
+  return {
+    ...page,
+    items: page.items.map(normalizeSchedule).filter((item): item is Schedule => item !== null),
+  }
+}
+
+function scheduleIdValue(item: Schedule) {
+  return item.scheduleId || item.id || 0
+}
+
+function scheduleWithBatchDetails(item: Schedule, batches: Batch[]) {
+  const batch = batches.find((candidate) => candidate.id === item.batchId)
+  return {
+    ...item,
+    batchCode: item.batchCode || batch?.code || '-',
+    courseName: item.courseName || batch?.courseName || '-',
+    instructorName: item.instructorName || batch?.instructorName || '-',
+  }
+}
+
+function normalizeTodaysClass(value: unknown): TodaysClass {
+  const record = recordFrom(value)
+  return {
+    ...(record as Partial<TodaysClass>),
+    id: numberField(record, 'id', 'Id', 'scheduleId', 'ScheduleId') || undefined,
+    scheduleId: numberField(record, 'scheduleId', 'ScheduleId', 'id', 'Id') || undefined,
+    batchId: numberField(record, 'batchId', 'BatchId') || undefined,
+    batchCode: stringField(record, 'batchCode', 'BatchCode'),
+    courseName: stringField(record, 'courseName', 'CourseName') || undefined,
+    instructorName: stringField(record, 'instructorName', 'InstructorName') || undefined,
+    startTime: stringField(record, 'startTime', 'StartTime'),
+    endTime: stringField(record, 'endTime', 'EndTime'),
+    room: stringField(record, 'room', 'Room') || null,
+    deliveryMode: (stringField(record, 'deliveryMode', 'DeliveryMode') || undefined) as DeliveryMode | undefined,
+    status: (stringField(record, 'status', 'Status') || undefined) as ScheduleStatus | undefined,
+  }
 }
 
 function batchStatusCountsFrom(value: unknown): BatchStatusCounts {
@@ -484,6 +553,7 @@ function AdminShell() {
   const [refreshToken, setRefreshToken] = useState(0)
   const canViewUsers = isSuperAdmin || isTenantAdmin || hasPermission('Users.View')
   const canManageUsers = isSuperAdmin || isTenantAdmin || hasPermission('Users.Manage')
+  const canManageOperations = isTenantAdmin || isOperationsStaff
   const visibleNavItems = useMemo(
     () =>
       navItems.filter((item) => {
@@ -559,7 +629,13 @@ function AdminShell() {
             <h1>{routeTitles[route]}</h1>
           </div>
           <div className="topbar-actions">
-            <QuickAction route={route} onAction={setModal} canManageUsers={canManageUsers} isSuperAdmin={isSuperAdmin} />
+            <QuickAction
+              route={route}
+              onAction={setModal}
+              canManageUsers={canManageUsers}
+              canManageOperations={canManageOperations}
+              isSuperAdmin={isSuperAdmin}
+            />
             <div className="user-menu">
               <span>
                 <strong>{user?.fullName}</strong>
@@ -578,7 +654,9 @@ function AdminShell() {
         {canAccessRoute && route === 'courses' && <CoursesPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'instructors' && <InstructorsPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'batches' && <BatchesPage onModal={setModal} refreshToken={refreshToken} />}
-        {canAccessRoute && route === 'schedules' && <SchedulesPage onModal={setModal} refreshToken={refreshToken} />}
+        {canAccessRoute && route === 'schedules' && (
+          <SchedulesPage onModal={setModal} refreshToken={refreshToken} canManage={canManageOperations} />
+        )}
         {canAccessRoute && route === 'attendance' && <AttendancePage refreshToken={refreshToken} />}
         {canAccessRoute && route === 'certificates' && <CertificatesPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'platform-tenants' && <TenantsPage onModal={setModal} refreshToken={refreshToken} />}
@@ -602,11 +680,13 @@ function QuickAction({
   route,
   onAction,
   canManageUsers,
+  canManageOperations,
   isSuperAdmin,
 }: {
   route: RouteKey
   onAction: (modal: ModalState) => void
   canManageUsers: boolean
+  canManageOperations: boolean
   isSuperAdmin: boolean
 }) {
   const config: Partial<Record<RouteKey, { label: string; modal: ModalState }>> = {
@@ -618,6 +698,9 @@ function QuickAction({
     certificates: { label: 'Generate certificate', modal: { type: 'certificate' } },
     ...(canManageUsers ? { users: { label: 'New user', modal: { type: 'user' } } } : {}),
     ...(isSuperAdmin ? { 'platform-tenants': { label: 'New tenant', modal: { type: 'tenant' } } } : {}),
+  }
+  if (!canManageOperations && ['trainees', 'courses', 'instructors', 'batches', 'schedules', 'certificates'].includes(route)) {
+    return <span className="muted">Today: {formatDate(today())}</span>
   }
   const action = config[route]
   if (!action) return <span className="muted">Today: {formatDate(today())}</span>
@@ -698,7 +781,7 @@ function useReferenceData(refreshToken: number | string, enabled = true, kinds: 
       setTrainees(traineeResult.status === 'fulfilled' ? normalizeTrainees(traineeResult.value) : [])
       setCourses(courseResult.status === 'fulfilled' ? normalizeCourses(courseResult.value) : [])
       setInstructors(instructorResult.status === 'fulfilled' ? arrayFrom<Instructor>(instructorResult.value) : [])
-      setBatches(batchResult.status === 'fulfilled' ? arrayFrom<Batch>(batchResult.value) : [])
+      setBatches(batchResult.status === 'fulfilled' ? normalizeBatches(batchResult.value) : [])
       setError(
         [traineeResult, courseResult, instructorResult, batchResult]
           .filter((result) => result.status === 'rejected')
@@ -748,7 +831,11 @@ function DashboardPage({ onOpen, refreshToken }: { onOpen: (route: RouteKey) => 
             ? attendance.value
             : { presentCount: 0, absentCount: 0, lateCount: 0, attendanceRate: 0 }
         const todaysClassItems =
-          todaysClasses.status === 'fulfilled' ? arrayFrom<TodaysClass>(todaysClasses.value) : []
+          todaysClasses.status === 'fulfilled'
+            ? arrayFrom<unknown>(todaysClasses.value)
+                .map(normalizeTodaysClass)
+                .filter((item) => item.status !== 'Inactive')
+            : []
         setMetrics({
           totalTrainees:
             total.status === 'fulfilled' ? numberFrom(total.value) : numberFrom(summaryValue.totalTrainees),
@@ -798,13 +885,15 @@ function DashboardPage({ onOpen, refreshToken }: { onOpen: (route: RouteKey) => 
         <DataTable
           loading={loading}
           emptyText="No classes scheduled for today."
-          columns={['Batch', 'Course', 'Instructor', 'Time', 'Room']}
+          columns={['Batch', 'Course', 'Instructor', 'Start', 'End', 'Room', 'Delivery']}
           rows={classes.map((item) => [
             item.batchCode,
             item.courseName ?? '-',
             item.instructorName ?? '-',
-            `${formatTime(item.startTime)} - ${formatTime(item.endTime)}`,
-            item.room,
+            formatTime(item.startTime),
+            formatTime(item.endTime),
+            item.room || '-',
+            item.deliveryMode ?? '-',
           ])}
         />
       </section>
@@ -1195,52 +1284,129 @@ function BatchesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) =
   )
 }
 
-function SchedulesPage({ onModal, refreshToken }: { onModal: (modal: ModalState) => void; refreshToken: number }) {
+function SchedulesPage({
+  onModal,
+  refreshToken,
+  canManage,
+}: {
+  onModal: (modal: ModalState) => void
+  refreshToken: number
+  canManage: boolean
+}) {
   const refs = useReferenceData(refreshToken)
-  const [search, setSearch] = useState('')
   const [batchId, setBatchId] = useState('')
+  const [courseId, setCourseId] = useState('')
   const [dayOfWeek, setDayOfWeek] = useState('')
+  const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
+  const [localRefreshToken, setLocalRefreshToken] = useState(0)
+  const [actionError, setActionError] = useState('')
   const { data, loading, error } = usePagedData(
-    () => api.schedules.list({ search, batchId, dayOfWeek, page, pageSize: 20 }),
-    [search, batchId, dayOfWeek, page, refreshToken],
+    () =>
+      api.schedules
+        .list({ BatchId: batchId, CourseId: courseId, DayOfWeek: dayOfWeek, Status: status, page, pageSize: 20 })
+        .then(schedulePageFrom),
+    [batchId, courseId, dayOfWeek, status, page, refreshToken, localRefreshToken],
   )
-  const remove = async (id: number) => {
-    if (!window.confirm('Delete this schedule?')) return
-    await api.schedules.delete(id)
+
+  const updateBatchFilter = (value: string) => {
+    setBatchId(value)
     setPage(1)
   }
+
+  const updateCourseFilter = (value: string) => {
+    setCourseId(value)
+    setPage(1)
+  }
+
+  const updateDayFilter = (value: string) => {
+    setDayOfWeek(value)
+    setPage(1)
+  }
+
+  const updateStatusFilter = (value: string) => {
+    setStatus(value)
+    setPage(1)
+  }
+
+  const deactivate = async (item: Schedule) => {
+    if (!window.confirm(`Deactivate schedule for ${item.batchCode || 'this batch'} on ${item.dayOfWeek}?`)) return
+    setActionError('')
+    try {
+      await api.schedules.deactivate(scheduleIdValue(item))
+      setLocalRefreshToken((value) => value + 1)
+    } catch (err) {
+      setActionError((err as Error).message)
+    }
+  }
+
+  const columns = canManage
+    ? ['Batch code', 'Course name', 'Instructor name', 'Day of week', 'Start time', 'End time', 'Room', 'Delivery mode', 'Status', 'Actions']
+    : ['Batch code', 'Course name', 'Instructor name', 'Day of week', 'Start time', 'End time', 'Room', 'Delivery mode', 'Status']
 
   return (
     <section className="panel">
       <div className="toolbar">
-        <SearchInput value={search} onChange={setSearch} />
-        <Select value={batchId} onChange={setBatchId} label="Batch" options={refs.batches.map(optionFromCode)} />
+        <Combobox
+          value={batchId}
+          onChange={updateBatchFilter}
+          label="Batch"
+          options={refs.batches.map(optionFromCode)}
+          allLabel="All batches"
+        />
+        <Combobox
+          value={courseId}
+          onChange={updateCourseFilter}
+          label="Course"
+          options={refs.courses.map(optionFromName)}
+          allLabel="All courses"
+        />
         <Select
           value={dayOfWeek}
-          onChange={setDayOfWeek}
-          label="Day"
+          onChange={updateDayFilter}
+          label="Day of week"
           options={daysOfWeek.map((day) => ({ value: day, label: day }))}
+        />
+        <Select
+          value={status}
+          onChange={updateStatusFilter}
+          label="Status"
+          options={scheduleStatuses.map((item) => ({ value: item, label: item }))}
         />
       </div>
       {error && <Alert tone="error" message={error} />}
+      {actionError && <Alert tone="error" message={actionError} />}
       <DataTable
         loading={loading}
         emptyText="No schedules match the current filters."
-        columns={['Batch', 'Day', 'Start', 'End', 'Room', 'Actions']}
-        rows={data.items.map((item) => [
-          <strong>{item.batchCode}</strong>,
-          item.dayOfWeek,
-          formatTime(item.startTime),
-          formatTime(item.endTime),
-          item.room,
-          <RowActions
-            actions={[
-              { label: 'Edit', onClick: () => onModal({ type: 'schedule', item }) },
-              { label: 'Delete', danger: true, onClick: () => void remove(item.id) },
-            ]}
-          />,
-        ])}
+        columns={columns}
+        rows={data.items.map((rawItem) => {
+          const item = scheduleWithBatchDetails(normalizeSchedule(rawItem) ?? rawItem, refs.batches)
+          const row: React.ReactNode[] = [
+            <strong>{item.batchCode}</strong>,
+            item.courseName,
+            item.instructorName,
+            item.dayOfWeek,
+            formatTime(item.startTime),
+            formatTime(item.endTime),
+            item.room || '-',
+            item.deliveryMode,
+            <StatusBadge value={item.status} />,
+          ]
+
+          if (canManage) {
+            row.push(
+              <RowActions
+                actions={[
+                  { label: 'Edit', onClick: () => onModal({ type: 'schedule', item }) },
+                  { label: 'Deactivate schedule', danger: true, onClick: () => void deactivate(item) },
+                ]}
+              />,
+            )
+          }
+
+          return row
+        })}
       />
       <Pagination data={data} onPage={setPage} />
     </section>
@@ -1564,7 +1730,7 @@ function ModalContent({
           <ScheduleForm
             item={modal.item}
             batches={refs.batches}
-            onSubmit={(body) => run(() => modal.item ? api.schedules.update(modal.item.id, body) : api.schedules.create(body))}
+            onSubmit={(body) => run(() => modal.item ? api.schedules.update(scheduleIdValue(modal.item), body) : api.schedules.create(body))}
           />
         )}
         {modal.type === 'certificate' && (
@@ -1742,24 +1908,72 @@ function ScheduleForm({
   batches: Batch[]
   onSubmit: (body: Partial<Schedule>) => void
 }) {
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(item?.deliveryMode ?? 'InPerson')
+  const [formError, setFormError] = useState('')
+
   return (
     <RecordForm
       submitLabel={item ? 'Save schedule' : 'Create schedule'}
-      onSubmit={(data) =>
+      onSubmit={(data) => {
+        const batchId = Number(data.get('batchId'))
+        const dayOfWeek = String(data.get('dayOfWeek') || '')
+        const startTime = timeForApi(data.get('startTime'))
+        const endTime = timeForApi(data.get('endTime'))
+        const room = String(data.get('room') ?? '').trim()
+        const mode = String(data.get('deliveryMode')) as DeliveryMode
+
+        if (!batchId || !dayOfWeek || !startTime || !endTime) {
+          setFormError('Batch, day of week, start time, and end time are required.')
+          return
+        }
+
+        if (endTime <= startTime) {
+          setFormError('End time must be after start time.')
+          return
+        }
+
+        if (mode === 'InPerson' && !room) {
+          setFormError('Room is required for in-person schedules.')
+          return
+        }
+
+        setFormError('')
         onSubmit({
-          batchId: Number(data.get('batchId')),
-          dayOfWeek: String(data.get('dayOfWeek')) as DayOfWeek,
-          startTime: timeForApi(data.get('startTime')),
-          endTime: timeForApi(data.get('endTime')),
-          room: String(data.get('room')),
+          batchId,
+          dayOfWeek: dayOfWeek as DayOfWeek,
+          startTime,
+          endTime,
+          deliveryMode: mode,
+          room: room || null,
+          status: String(data.get('status')) as ScheduleStatus,
+          notes: nullable(data.get('notes')),
         })
-      }
+      }}
     >
+      {formError && <Alert tone="error" message={formError} />}
       <SelectField name="batchId" label="Batch" defaultValue={item?.batchId} options={batches.map(optionFromCode)} />
       <SelectField name="dayOfWeek" label="Day of week" defaultValue={item?.dayOfWeek ?? 'Sunday'} options={daysOfWeek} />
       <TextField name="startTime" label="Start time" type="time" defaultValue={timeInputValue(item?.startTime, '09:00')} required />
       <TextField name="endTime" label="End time" type="time" defaultValue={timeInputValue(item?.endTime, '12:00')} required />
-      <TextField name="room" label="Room" defaultValue={item?.room} required />
+      <Field label="Delivery mode">
+        <select
+          name="deliveryMode"
+          value={deliveryMode}
+          onChange={(event) => setDeliveryMode(event.target.value as DeliveryMode)}
+          required
+        >
+          {deliveryModes.map((mode) => (
+            <option key={mode} value={mode}>
+              {mode}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <TextField name="room" label="Room" defaultValue={item?.room ?? ''} required={deliveryMode === 'InPerson'} />
+      <SelectField name="status" label="Status" defaultValue={item?.status ?? 'Active'} options={scheduleStatuses} />
+      <Field label="Notes">
+        <textarea name="notes" defaultValue={item?.notes ?? ''} rows={4} />
+      </Field>
     </RecordForm>
   )
 }

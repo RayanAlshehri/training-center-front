@@ -112,7 +112,7 @@ export const api = {
     create: (body: Partial<Schedule>) => request<Schedule>('/api/schedules', json(body)),
     update: (id: number, body: Partial<Schedule>) =>
       request<Schedule>(`/api/schedules/${id}`, putJson(body)),
-    delete: (id: number) => request<void>(`/api/schedules/${id}`, { method: 'DELETE' }),
+    deactivate: (id: number) => request<void>(`/api/schedules/${id}/deactivate`, { method: 'POST' }),
   },
   certificates: {
     list: (params: QueryParams) => request<PagedResult<Certificate>>(`/api/certificates${toQuery(params)}`),

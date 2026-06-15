@@ -37,7 +37,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -304,7 +305,8 @@ h2 {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 39px;
   border: 1px solid var(--border);
@@ -312,6 +314,10 @@ select {
   background: #ffffff;
   color: var(--text);
   padding: 8px 10px;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .combobox-control {

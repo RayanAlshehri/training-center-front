@@ -1,6 +1,8 @@
 export type EntityStatus = 'Active' | 'Inactive'
 export type BatchStatus = 'Planned' | 'Active' | 'Completed' | 'Cancelled'
 export type AttendanceStatus = 'Present' | 'Absent' | 'Late'
+export type DeliveryMode = 'InPerson' | 'Online' | 'Hybrid'
+export type ScheduleStatus = 'Active' | 'Inactive'
 export type DayOfWeek =
   | 'Sunday'
   | 'Monday'
@@ -13,6 +15,8 @@ export type DayOfWeek =
 export const entityStatuses: EntityStatus[] = ['Active', 'Inactive']
 export const batchStatuses: BatchStatus[] = ['Planned', 'Active', 'Completed', 'Cancelled']
 export const attendanceStatuses: AttendanceStatus[] = ['Present', 'Absent', 'Late']
+export const deliveryModes: DeliveryMode[] = ['InPerson', 'Online', 'Hybrid']
+export const scheduleStatuses: ScheduleStatus[] = ['Active', 'Inactive']
 export const daysOfWeek: DayOfWeek[] = [
   'Sunday',
   'Monday',
@@ -93,13 +97,20 @@ export interface BatchStatusCounts {
 }
 
 export interface Schedule {
-  id: number
+  id?: number
+  scheduleId: number
   batchId: number
   batchCode: string
+  courseName: string
+  instructorId: number
+  instructorName: string
   dayOfWeek: DayOfWeek
   startTime: string
   endTime: string
-  room: string
+  room: string | null
+  deliveryMode: DeliveryMode
+  status: ScheduleStatus
+  notes: string | null
 }
 
 export interface AttendanceRecord {
@@ -202,13 +213,16 @@ export interface DashboardSummary {
 
 export interface TodaysClass {
   id?: number
+  scheduleId?: number
   batchId?: number
   batchCode: string
   courseName?: string
   instructorName?: string
   startTime: string
   endTime: string
-  room: string
+  room?: string | null
+  deliveryMode?: DeliveryMode
+  status?: ScheduleStatus
 }
 
 export interface AttendanceSummary {
