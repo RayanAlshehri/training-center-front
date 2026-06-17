@@ -3,6 +3,7 @@ export type BatchStatus = 'Planned' | 'Active' | 'Completed' | 'Cancelled'
 export type AttendanceStatus = 'Present' | 'Absent' | 'Late'
 export type DeliveryMode = 'InPerson' | 'Online' | 'Hybrid'
 export type ScheduleStatus = 'Active' | 'Inactive'
+export type ClassSessionStatus = 'Scheduled' | 'Cancelled' | 'Completed'
 export type DayOfWeek =
   | 'Sunday'
   | 'Monday'
@@ -17,6 +18,7 @@ export const batchStatuses: BatchStatus[] = ['Planned', 'Active', 'Completed', '
 export const attendanceStatuses: AttendanceStatus[] = ['Present', 'Absent', 'Late']
 export const deliveryModes: DeliveryMode[] = ['InPerson', 'Online', 'Hybrid']
 export const scheduleStatuses: ScheduleStatus[] = ['Active', 'Inactive']
+export const classSessionStatuses: ClassSessionStatus[] = ['Scheduled', 'Cancelled', 'Completed']
 export const daysOfWeek: DayOfWeek[] = [
   'Sunday',
   'Monday',
@@ -113,8 +115,47 @@ export interface Schedule {
   notes: string | null
 }
 
+export interface ClassSession {
+  id?: number
+  classSessionId: number
+  scheduleId: number
+  batchId: number
+  batchCode: string
+  courseName: string
+  instructorName: string
+  sessionDate: string
+  startTime: string
+  endTime: string
+  room: string | null
+  deliveryMode: DeliveryMode
+  status: ClassSessionStatus
+  notes: string | null
+}
+
+export interface CreateClassSessionRequest {
+  scheduleId: number
+  sessionDate: string
+  startTime?: string
+  endTime?: string
+  room?: string | null
+  deliveryMode?: DeliveryMode
+  status?: ClassSessionStatus
+  notes?: string | null
+}
+
+export interface UpdateClassSessionRequest {
+  sessionDate: string
+  startTime: string
+  endTime: string
+  room: string | null
+  deliveryMode: DeliveryMode
+  status: ClassSessionStatus
+  notes: string | null
+}
+
 export interface AttendanceRecord {
   id: number
+  classSessionId: number
   batchId: number
   batchCode: string
   traineeId: number
@@ -213,6 +254,7 @@ export interface DashboardSummary {
 
 export interface TodaysClass {
   id?: number
+  classSessionId?: number
   scheduleId?: number
   batchId?: number
   batchCode: string
@@ -222,7 +264,7 @@ export interface TodaysClass {
   endTime: string
   room?: string | null
   deliveryMode?: DeliveryMode
-  status?: ScheduleStatus
+  status?: ClassSessionStatus
 }
 
 export interface AttendanceSummary {

@@ -122,9 +122,22 @@ function createApiError(message: string, status?: number, details?: ProblemDetai
 
 async function readPayload(response: Response) {
   const contentType = response.headers.get('content-type') ?? ''
-  return contentType.includes('application/json')
-    ? await response.json()
-    : await response.text()
+  if (contentType.includes('application/json')) {
+    return response.json()
+  }
+
+  const text = await response.text()
+  const trimmed = text.trim()
+
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      return text
+    }
+  }
+
+  return text
 }
 
 export async function request<T>(

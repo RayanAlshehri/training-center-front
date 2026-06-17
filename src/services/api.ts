@@ -5,6 +5,8 @@ import type {
   Batch,
   BatchStatusCounts,
   Certificate,
+  ClassSession,
+  CreateClassSessionRequest,
   CreateTenantRequest,
   CreateUserRequest,
   Course,
@@ -15,6 +17,7 @@ import type {
   TodaysClass,
   Trainee,
   Tenant,
+  UpdateClassSessionRequest,
   UpdateUserRequest,
   UserAccount,
 } from '../types'
@@ -22,6 +25,15 @@ import { apiBaseUrl, request } from './request'
 
 type QueryValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryValue>
+type ClassSessionQueryParams = QueryParams & {
+  page?: QueryValue
+  pageSize?: QueryValue
+  batchId?: QueryValue
+  scheduleId?: QueryValue
+  from?: QueryValue
+  to?: QueryValue
+  status?: QueryValue
+}
 
 function toQuery(params?: QueryParams) {
   const search = new URLSearchParams()
@@ -43,6 +55,18 @@ const putJson = (body: unknown): RequestInit => ({
   method: 'PUT',
   body: JSON.stringify(body),
 })
+
+function classSessionQuery(params: ClassSessionQueryParams) {
+  return {
+    Page: params.page,
+    PageSize: params.pageSize,
+    BatchId: params.batchId,
+    ScheduleId: params.scheduleId,
+    From: params.from,
+    To: params.to,
+    Status: params.status,
+  }
+}
 
 export const api = {
   baseUrl: apiBaseUrl,
@@ -113,6 +137,17 @@ export const api = {
     update: (id: number, body: Partial<Schedule>) =>
       request<Schedule>(`/api/schedules/${id}`, putJson(body)),
     deactivate: (id: number) => request<void>(`/api/schedules/${id}/deactivate`, { method: 'POST' }),
+  },
+  classSessions: {
+    list: (params: ClassSessionQueryParams) =>
+      request<PagedResult<ClassSession>>(`/api/ClassSessions${toQuery(classSessionQuery(params))}`),
+    get: (id: number) => request<ClassSession>(`/api/ClassSessions/${id}`),
+    create: (body: CreateClassSessionRequest) => request<ClassSession>('/api/ClassSessions', json(body)),
+    update: (id: number, body: UpdateClassSessionRequest) =>
+      request<ClassSession>(`/api/ClassSessions/${id}`, putJson(body)),
+    cancel: (id: number) => request<void>(`/api/ClassSessions/${id}`, { method: 'DELETE' }),
+    attendance: (classSessionId: number, records: { traineeId: number; status: AttendanceStatus }[]) =>
+      request<void>(`/api/class-sessions/${classSessionId}/attendance`, json({ records })),
   },
   certificates: {
     list: (params: QueryParams) => request<PagedResult<Certificate>>(`/api/certificates${toQuery(params)}`),

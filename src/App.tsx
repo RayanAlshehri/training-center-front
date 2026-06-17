@@ -5,6 +5,7 @@ import { api } from './services/api'
 import {
   attendanceStatuses,
   batchStatuses,
+  classSessionStatuses,
   daysOfWeek,
   deliveryModes,
   entityStatuses,
@@ -15,6 +16,9 @@ import {
   type BatchStatus,
   type BatchStatusCounts,
   type Certificate,
+  type ClassSession,
+  type ClassSessionStatus,
+  type CreateClassSessionRequest,
   type CreateUserRequest,
   type Course,
   type DayOfWeek,
@@ -27,6 +31,7 @@ import {
   type Tenant,
   type TodaysClass,
   type Trainee,
+  type UpdateClassSessionRequest,
   type UpdateUserRequest,
   type UserAccount,
 } from './types'
@@ -38,6 +43,7 @@ type RouteKey =
   | 'instructors'
   | 'batches'
   | 'schedules'
+  | 'class-sessions'
   | 'attendance'
   | 'certificates'
   | 'users'
@@ -51,6 +57,7 @@ type ModalState =
   | { type: 'instructor'; item?: Instructor }
   | { type: 'batch'; item?: Batch }
   | { type: 'schedule'; item?: Schedule }
+  | { type: 'classSession'; item?: ClassSession; schedule?: Schedule }
   | { type: 'certificate' }
   | { type: 'user'; item?: UserAccount }
   | { type: 'tenant'; item?: Tenant }
@@ -85,6 +92,7 @@ const navItems: { key: RouteKey; label: string; icon: string }[] = [
   { key: 'instructors', label: 'Instructors', icon: '◇' },
   { key: 'batches', label: 'Batches', icon: '▤' },
   { key: 'schedules', label: 'Schedules', icon: '◷' },
+  { key: 'class-sessions', label: 'Class Sessions', icon: 'CS' },
   { key: 'attendance', label: 'Attendance', icon: '✓' },
   { key: 'certificates', label: 'Certificates', icon: '✦' },
   { key: 'users', label: 'Users', icon: 'U' },
@@ -98,6 +106,7 @@ const routeTitles: Record<RouteKey, string> = {
   instructors: 'Instructors',
   batches: 'Batches',
   schedules: 'Schedules',
+  'class-sessions': 'Class Sessions',
   attendance: 'Attendance',
   certificates: 'Certificates',
   users: 'User Management',
@@ -282,12 +291,50 @@ function scheduleWithBatchDetails(item: Schedule, batches: Batch[]) {
   }
 }
 
+function normalizeClassSession(value: unknown): ClassSession | null {
+  const record = recordFrom(value)
+  const classSessionId = numberField(record, 'classSessionId', 'ClassSessionId', 'id', 'Id')
+
+  if (!classSessionId) return null
+
+  return {
+    ...(record as Partial<ClassSession>),
+    id: classSessionId,
+    classSessionId,
+    scheduleId: numberField(record, 'scheduleId', 'ScheduleId'),
+    batchId: numberField(record, 'batchId', 'BatchId'),
+    batchCode: stringField(record, 'batchCode', 'BatchCode'),
+    courseName: stringField(record, 'courseName', 'CourseName'),
+    instructorName: stringField(record, 'instructorName', 'InstructorName'),
+    sessionDate: stringField(record, 'sessionDate', 'SessionDate', 'date', 'Date'),
+    startTime: stringField(record, 'startTime', 'StartTime'),
+    endTime: stringField(record, 'endTime', 'EndTime'),
+    room: stringField(record, 'room', 'Room') || null,
+    deliveryMode: (stringField(record, 'deliveryMode', 'DeliveryMode') || 'InPerson') as DeliveryMode,
+    status: (stringField(record, 'status', 'Status') || 'Scheduled') as ClassSessionStatus,
+    notes: stringField(record, 'notes', 'Notes') || null,
+  } as ClassSession
+}
+
+function classSessionPageFrom(value: unknown): PagedResult<ClassSession> {
+  const page = pagedFrom<unknown>(value)
+  return {
+    ...page,
+    items: page.items.map(normalizeClassSession).filter((item): item is ClassSession => item !== null),
+  }
+}
+
+function classSessionIdValue(item: ClassSession | TodaysClass) {
+  return numberField(recordFrom(item), 'classSessionId', 'ClassSessionId', 'id', 'Id')
+}
+
 function normalizeTodaysClass(value: unknown): TodaysClass {
   const record = recordFrom(value)
   return {
     ...(record as Partial<TodaysClass>),
-    id: numberField(record, 'id', 'Id', 'scheduleId', 'ScheduleId') || undefined,
-    scheduleId: numberField(record, 'scheduleId', 'ScheduleId', 'id', 'Id') || undefined,
+    id: numberField(record, 'id', 'Id', 'classSessionId', 'ClassSessionId') || undefined,
+    classSessionId: numberField(record, 'classSessionId', 'ClassSessionId', 'id', 'Id') || undefined,
+    scheduleId: numberField(record, 'scheduleId', 'ScheduleId') || undefined,
     batchId: numberField(record, 'batchId', 'BatchId') || undefined,
     batchCode: stringField(record, 'batchCode', 'BatchCode'),
     courseName: stringField(record, 'courseName', 'CourseName') || undefined,
@@ -296,7 +343,7 @@ function normalizeTodaysClass(value: unknown): TodaysClass {
     endTime: stringField(record, 'endTime', 'EndTime'),
     room: stringField(record, 'room', 'Room') || null,
     deliveryMode: (stringField(record, 'deliveryMode', 'DeliveryMode') || undefined) as DeliveryMode | undefined,
-    status: (stringField(record, 'status', 'Status') || undefined) as ScheduleStatus | undefined,
+    status: (stringField(record, 'status', 'Status') || undefined) as ClassSessionStatus | undefined,
   }
 }
 
@@ -564,7 +611,7 @@ function AdminShell() {
         if (item.key === 'platform-tenants') return false
         if (item.key === 'users') return isTenantAdmin && canViewUsers
         if (isInstructor) {
-          return item.key === 'dashboard' || item.key === 'batches' || item.key === 'schedules' || item.key === 'attendance'
+          return item.key === 'dashboard' || item.key === 'batches' || item.key === 'schedules' || item.key === 'class-sessions' || item.key === 'attendance'
         }
 
         return isTenantAdmin || isOperationsStaff || isTenantUser
@@ -582,6 +629,11 @@ function AdminShell() {
   const navigate = (next: RouteKey) => {
     setRoute(next)
     window.history.pushState({}, '', pathForRoute(next))
+  }
+
+  const openAttendanceForSession = (classSessionId: number) => {
+    setRoute('attendance')
+    window.history.pushState({}, '', `/attendance?classSessionId=${classSessionId}`)
   }
 
   useEffect(() => {
@@ -649,13 +701,23 @@ function AdminShell() {
         </header>
 
         {!canAccessRoute && <AccessDenied />}
-        {canAccessRoute && route === 'dashboard' && <DashboardPage onOpen={navigate} refreshToken={refreshToken} />}
+        {canAccessRoute && route === 'dashboard' && (
+          <DashboardPage onOpen={navigate} onOpenAttendance={openAttendanceForSession} refreshToken={refreshToken} />
+        )}
         {canAccessRoute && route === 'trainees' && <TraineesPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'courses' && <CoursesPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'instructors' && <InstructorsPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'batches' && <BatchesPage onModal={setModal} refreshToken={refreshToken} />}
         {canAccessRoute && route === 'schedules' && (
           <SchedulesPage onModal={setModal} refreshToken={refreshToken} canManage={canManageOperations} />
+        )}
+        {canAccessRoute && route === 'class-sessions' && (
+          <ClassSessionsPage
+            onModal={setModal}
+            onOpenAttendance={openAttendanceForSession}
+            refreshToken={refreshToken}
+            canManage={canManageOperations}
+          />
         )}
         {canAccessRoute && route === 'attendance' && <AttendancePage refreshToken={refreshToken} />}
         {canAccessRoute && route === 'certificates' && <CertificatesPage onModal={setModal} refreshToken={refreshToken} />}
@@ -695,11 +757,12 @@ function QuickAction({
     instructors: { label: 'New instructor', modal: { type: 'instructor' } },
     batches: { label: 'New batch', modal: { type: 'batch' } },
     schedules: { label: 'New schedule', modal: { type: 'schedule' } },
+    'class-sessions': { label: 'New class session', modal: { type: 'classSession' } },
     certificates: { label: 'Generate certificate', modal: { type: 'certificate' } },
     ...(canManageUsers ? { users: { label: 'New user', modal: { type: 'user' } } } : {}),
     ...(isSuperAdmin ? { 'platform-tenants': { label: 'New tenant', modal: { type: 'tenant' } } } : {}),
   }
-  if (!canManageOperations && ['trainees', 'courses', 'instructors', 'batches', 'schedules', 'certificates'].includes(route)) {
+  if (!canManageOperations && ['trainees', 'courses', 'instructors', 'batches', 'schedules', 'class-sessions', 'certificates'].includes(route)) {
     return <span className="muted">Today: {formatDate(today())}</span>
   }
   const action = config[route]
@@ -742,7 +805,7 @@ function usePagedData<T>(loader: () => Promise<PagedResult<T>>, deps: unknown[])
   return { data, loading, error }
 }
 
-type ReferenceKind = 'trainees' | 'courses' | 'instructors' | 'batches'
+type ReferenceKind = 'trainees' | 'courses' | 'instructors' | 'batches' | 'schedules'
 
 const allReferenceKinds: ReferenceKind[] = ['trainees', 'courses', 'instructors', 'batches']
 
@@ -751,6 +814,7 @@ function useReferenceData(refreshToken: number | string, enabled = true, kinds: 
   const [courses, setCourses] = useState<Course[]>([])
   const [instructors, setInstructors] = useState<Instructor[]>([])
   const [batches, setBatches] = useState<Batch[]>([])
+  const [schedules, setSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const kindsKey = kinds.join('|')
@@ -761,6 +825,7 @@ function useReferenceData(refreshToken: number | string, enabled = true, kinds: 
       setCourses([])
       setInstructors([])
       setBatches([])
+      setSchedules([])
       setLoading(false)
       setError('')
       return
@@ -776,14 +841,16 @@ function useReferenceData(refreshToken: number | string, enabled = true, kinds: 
       shouldLoad('courses') ? api.courses.list({ page: 1, pageSize: 100 }) : Promise.resolve(undefined),
       shouldLoad('instructors') ? api.instructors.list({ page: 1, pageSize: 100 }) : Promise.resolve(undefined),
       shouldLoad('batches') ? api.batches.list({ page: 1, pageSize: 100 }) : Promise.resolve(undefined),
-    ]).then(([traineeResult, courseResult, instructorResult, batchResult]) => {
+      shouldLoad('schedules') ? api.schedules.list({ page: 1, pageSize: 100 }) : Promise.resolve(undefined),
+    ]).then(([traineeResult, courseResult, instructorResult, batchResult, scheduleResult]) => {
       if (!active) return
       setTrainees(traineeResult.status === 'fulfilled' ? normalizeTrainees(traineeResult.value) : [])
       setCourses(courseResult.status === 'fulfilled' ? normalizeCourses(courseResult.value) : [])
       setInstructors(instructorResult.status === 'fulfilled' ? arrayFrom<Instructor>(instructorResult.value) : [])
       setBatches(batchResult.status === 'fulfilled' ? normalizeBatches(batchResult.value) : [])
+      setSchedules(scheduleResult.status === 'fulfilled' ? schedulePageFrom(scheduleResult.value).items : [])
       setError(
-        [traineeResult, courseResult, instructorResult, batchResult]
+        [traineeResult, courseResult, instructorResult, batchResult, scheduleResult]
           .filter((result) => result.status === 'rejected')
           .map((result) => (result as PromiseRejectedResult).reason?.message ?? 'Failed to load reference data')
           .join(' '),
@@ -795,10 +862,18 @@ function useReferenceData(refreshToken: number | string, enabled = true, kinds: 
     }
   }, [refreshToken, enabled, kindsKey])
 
-  return { trainees, courses, instructors, batches, loading, error }
+  return { trainees, courses, instructors, batches, schedules, loading, error }
 }
 
-function DashboardPage({ onOpen, refreshToken }: { onOpen: (route: RouteKey) => void; refreshToken: number }) {
+function DashboardPage({
+  onOpen,
+  onOpenAttendance,
+  refreshToken,
+}: {
+  onOpen: (route: RouteKey) => void
+  onOpenAttendance: (classSessionId: number) => void
+  refreshToken: number
+}) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [metrics, setMetrics] = useState({
@@ -834,7 +909,7 @@ function DashboardPage({ onOpen, refreshToken }: { onOpen: (route: RouteKey) => 
           todaysClasses.status === 'fulfilled'
             ? arrayFrom<unknown>(todaysClasses.value)
                 .map(normalizeTodaysClass)
-                .filter((item) => item.status !== 'Inactive')
+                .filter((item) => item.status !== undefined)
             : []
         setMetrics({
           totalTrainees:
@@ -881,20 +956,34 @@ function DashboardPage({ onOpen, refreshToken }: { onOpen: (route: RouteKey) => 
         />
       </div>
       <section className="panel">
-        <PanelHeader title="Today's class schedule" actionLabel="Open schedules" onAction={() => onOpen('schedules')} />
+        <PanelHeader title="Today's class sessions" actionLabel="Open class sessions" onAction={() => onOpen('class-sessions')} />
         <DataTable
           loading={loading}
           emptyText="No classes scheduled for today."
-          columns={['Batch', 'Course', 'Instructor', 'Start', 'End', 'Room', 'Delivery']}
-          rows={classes.map((item) => [
-            item.batchCode,
-            item.courseName ?? '-',
-            item.instructorName ?? '-',
-            formatTime(item.startTime),
-            formatTime(item.endTime),
-            item.room || '-',
-            item.deliveryMode ?? '-',
-          ])}
+          columns={['Batch', 'Course', 'Instructor', 'Start', 'End', 'Room', 'Delivery', 'Status', 'Actions']}
+          rows={classes.map((item) => {
+            const sessionId = classSessionIdValue(item)
+            const isCancelled = item.status === 'Cancelled'
+            return [
+              item.batchCode,
+              item.courseName ?? '-',
+              item.instructorName ?? '-',
+              formatTime(item.startTime),
+              formatTime(item.endTime),
+              item.room || '-',
+              item.deliveryMode ?? '-',
+              <StatusBadge value={item.status} />,
+              <RowActions
+                actions={[
+                  {
+                    label: isCancelled ? 'Attendance disabled' : 'Mark attendance',
+                    disabled: isCancelled || !sessionId,
+                    onClick: () => onOpenAttendance(sessionId),
+                  },
+                ]}
+              />,
+            ]
+          })}
         />
       </section>
     </section>
@@ -1398,6 +1487,7 @@ function SchedulesPage({
             row.push(
               <RowActions
                 actions={[
+                  { label: 'Create session', onClick: () => onModal({ type: 'classSession', schedule: item }) },
                   { label: 'Edit', onClick: () => onModal({ type: 'schedule', item }) },
                   { label: 'Deactivate schedule', danger: true, onClick: () => void deactivate(item) },
                 ]}
@@ -1413,43 +1503,240 @@ function SchedulesPage({
   )
 }
 
-function AttendancePage({ refreshToken }: { refreshToken: number }) {
-  const refs = useReferenceData(refreshToken)
+function ClassSessionsPage({
+  onModal,
+  onOpenAttendance,
+  refreshToken,
+  canManage,
+}: {
+  onModal: (modal: ModalState) => void
+  onOpenAttendance: (classSessionId: number) => void
+  refreshToken: number
+  canManage: boolean
+}) {
+  const refs = useReferenceData(refreshToken, true, ['batches', 'schedules'])
   const [batchId, setBatchId] = useState('')
+  const [scheduleId, setScheduleId] = useState('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [status, setStatus] = useState('')
+  const [page, setPage] = useState(1)
+  const [localRefreshToken, setLocalRefreshToken] = useState(0)
+  const [actionError, setActionError] = useState('')
+  const selectedSchedule = refs.schedules.find((schedule) => String(scheduleIdValue(schedule)) === scheduleId)
+  const scheduleOptions = batchId
+    ? refs.schedules.filter((schedule) => String(schedule.batchId) === String(batchId) || String(scheduleIdValue(schedule)) === scheduleId)
+    : refs.schedules
+  const { data, loading, error } = usePagedData(
+    () =>
+      api.classSessions
+        .list({ page, pageSize: 20, batchId: scheduleId ? undefined : batchId, scheduleId, from, to, status })
+        .then(classSessionPageFrom),
+    [batchId, scheduleId, from, to, status, page, refreshToken, localRefreshToken],
+  )
+
+  const resetPage = (work: () => void) => {
+    work()
+    setPage(1)
+  }
+
+  const updateBatchFilter = (value: string) => {
+    resetPage(() => {
+      setBatchId(value)
+      if (selectedSchedule && value && String(selectedSchedule.batchId) !== String(value)) {
+        setScheduleId('')
+      }
+    })
+  }
+
+  const updateScheduleFilter = (value: string) => {
+    resetPage(() => {
+      setScheduleId(value)
+      const schedule = refs.schedules.find((item) => String(scheduleIdValue(item)) === value)
+      if (schedule?.batchId) {
+        setBatchId(String(schedule.batchId))
+      }
+    })
+  }
+
+  const cancel = async (item: ClassSession) => {
+    if (!window.confirm(`Cancel ${item.batchCode || 'this class session'} on ${formatDate(item.sessionDate)}?`)) return
+    setActionError('')
+    try {
+      await api.classSessions.cancel(classSessionIdValue(item))
+      setLocalRefreshToken((value) => value + 1)
+    } catch (err) {
+      setActionError((err as Error).message)
+    }
+  }
+
+  const columns = canManage
+    ? ['Date', 'Time', 'Batch', 'Course', 'Instructor', 'Room', 'Delivery', 'Status', 'Actions']
+    : ['Date', 'Time', 'Batch', 'Course', 'Instructor', 'Room', 'Delivery', 'Status', 'Attendance']
+
+  return (
+    <section className="panel">
+      <div className="toolbar">
+        <Field label="From">
+          <input type="date" value={from} onChange={(event) => resetPage(() => setFrom(event.target.value))} />
+        </Field>
+        <Field label="To">
+          <input type="date" value={to} onChange={(event) => resetPage(() => setTo(event.target.value))} />
+        </Field>
+        <Combobox
+          value={batchId}
+          onChange={updateBatchFilter}
+          label="Batch"
+          options={refs.batches.map(optionFromCode)}
+          allLabel="All batches"
+        />
+        <Combobox
+          value={scheduleId}
+          onChange={updateScheduleFilter}
+          label="Schedule"
+          options={scheduleOptions.map(optionFromSchedule)}
+          allLabel="All schedules"
+        />
+        <Select
+          value={status}
+          onChange={(value) => resetPage(() => setStatus(value))}
+          label="Status"
+          options={classSessionStatuses.map((item) => ({ value: item, label: item }))}
+        />
+      </div>
+      {refs.error && <Alert tone="error" message={refs.error} />}
+      {error && <Alert tone="error" message={error} />}
+      {actionError && <Alert tone="error" message={actionError} />}
+      <DataTable
+        loading={loading}
+        emptyText="No class sessions match the current filters."
+        columns={columns}
+        rows={data.items.map((item) => {
+          const isCancelled = item.status === 'Cancelled'
+          const actions: { label: string; onClick: () => void; danger?: boolean; disabled?: boolean }[] = [
+            {
+              label: isCancelled ? 'Attendance disabled' : 'Mark attendance',
+              disabled: isCancelled,
+              onClick: () => onOpenAttendance(classSessionIdValue(item)),
+            },
+          ]
+
+          if (canManage) {
+            actions.unshift({ label: 'Edit', onClick: () => onModal({ type: 'classSession', item }) })
+            actions.push({ label: 'Cancel', danger: true, disabled: isCancelled, onClick: () => void cancel(item) })
+          }
+
+          return [
+            formatDate(item.sessionDate),
+            `${formatTime(item.startTime)} - ${formatTime(item.endTime)}`,
+            <strong>{item.batchCode}</strong>,
+            item.courseName || '-',
+            item.instructorName || '-',
+            item.room || '-',
+            item.deliveryMode,
+            <StatusBadge value={item.status} />,
+            <RowActions actions={actions} />,
+          ]
+        })}
+      />
+      <Pagination data={data} onPage={setPage} />
+    </section>
+  )
+}
+
+function AttendancePage({ refreshToken }: { refreshToken: number }) {
+  const initialSessionId = new URLSearchParams(window.location.search).get('classSessionId') ?? ''
   const [date, setDate] = useState(today())
+  const [classSessionId, setClassSessionId] = useState(initialSessionId)
+  const [sessions, setSessions] = useState<ClassSession[]>([])
+  const [selectedSession, setSelectedSession] = useState<ClassSession | null>(null)
   const [trainees, setTrainees] = useState<Trainee[]>([])
   const [records, setRecords] = useState<Record<number, AttendanceStatus>>({})
-  const [loading, setLoading] = useState(false)
+  const [rosterSearch, setRosterSearch] = useState('')
+  const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [traineesLoading, setTraineesLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const attendanceCounts = useMemo(
+    () =>
+      trainees.reduce(
+        (counts, trainee) => {
+          const status = records[trainee.id] ?? 'Present'
+          counts[status] += 1
+          counts.Total += 1
+          return counts
+        },
+        { Present: 0, Absent: 0, Late: 0, Total: 0 } as Record<AttendanceStatus | 'Total', number>,
+      ),
+    [records, trainees],
+  )
+  const visibleTrainees = useMemo(() => {
+    const query = rosterSearch.trim().toLowerCase()
+    if (!query) return trainees
+    return trainees.filter((trainee) => `${personName(trainee)} ${trainee.phone}`.toLowerCase().includes(query))
+  }, [rosterSearch, trainees])
 
   useEffect(() => {
-    if (!batchId) {
+    setSessionsLoading(true)
+    setError('')
+    api.classSessions
+      .list({ page: 1, pageSize: 100, from: date, to: date })
+      .then((result) => {
+        const items = classSessionPageFrom(result).items
+        setSessions(items)
+        const activeItems = items.filter((item) => item.status !== 'Cancelled')
+        if (!classSessionId && activeItems.length === 1) {
+          const nextSessionId = String(classSessionIdValue(activeItems[0]))
+          setClassSessionId(nextSessionId)
+          window.history.replaceState({}, '', `/attendance?classSessionId=${nextSessionId}`)
+        }
+        if (classSessionId && !items.some((item) => classSessionIdValue(item) === Number(classSessionId))) {
+          return api.classSessions.get(Number(classSessionId)).then((item) => {
+            const normalized = normalizeClassSession(item)
+            if (normalized) {
+              setSessions((current) => [normalized, ...current])
+              setSelectedSession(normalized)
+              setDate(dateValue(normalized.sessionDate) || date)
+            }
+          })
+        }
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setSessionsLoading(false))
+  }, [date, refreshToken])
+
+  useEffect(() => {
+    const nextSession = sessions.find((item) => classSessionIdValue(item) === Number(classSessionId)) ?? null
+    setSelectedSession(nextSession)
+  }, [classSessionId, sessions])
+
+  useEffect(() => {
+    if (!selectedSession?.batchId) {
       setTrainees([])
+      setRecords({})
       return
     }
-    setLoading(true)
+    setTraineesLoading(true)
     setError('')
     api.batches
-      .trainees(Number(batchId))
+      .trainees(selectedSession.batchId)
       .then((items) => {
         const traineeItems = normalizeTrainees(items)
         setTrainees(traineeItems)
         setRecords(Object.fromEntries(traineeItems.map((item) => [item.id, 'Present'])))
       })
       .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
-  }, [batchId])
+      .finally(() => setTraineesLoading(false))
+  }, [selectedSession?.batchId])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!batchId) return
+    if (!selectedSession || selectedSession.status === 'Cancelled') return
     setMessage('')
     setError('')
     try {
-      await api.batches.attendance(
-        Number(batchId),
-        date,
+      await api.classSessions.attendance(
+        classSessionIdValue(selectedSession),
         trainees.map((trainee) => ({ traineeId: trainee.id, status: records[trainee.id] ?? 'Present' })),
       )
       setMessage('Attendance saved successfully.')
@@ -1458,22 +1745,103 @@ function AttendancePage({ refreshToken }: { refreshToken: number }) {
     }
   }
 
+  const selectSession = (session: ClassSession) => {
+    if (session.status === 'Cancelled') return
+    const nextSessionId = String(classSessionIdValue(session))
+    setClassSessionId(nextSessionId)
+    setMessage('')
+    setRosterSearch('')
+    window.history.replaceState({}, '', `/attendance?classSessionId=${nextSessionId}`)
+  }
+
+  const markAll = (status: AttendanceStatus) => {
+    setRecords(Object.fromEntries(trainees.map((trainee) => [trainee.id, status])))
+    setMessage('')
+  }
+
   return (
     <section className="panel attendance-panel">
       <form onSubmit={submit}>
         <div className="form-grid">
-          <Select value={batchId} onChange={setBatchId} label="Batch" options={refs.batches.map(optionFromCode)} />
           <Field label="Attendance date">
-            <input type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
+            <input
+              type="date"
+              value={date}
+              onChange={(event) => {
+                setDate(event.target.value)
+                setClassSessionId('')
+                setSelectedSession(null)
+              }}
+              required
+            />
           </Field>
         </div>
         {message && <Alert tone="success" message={message} />}
         {error && <Alert tone="error" message={error} />}
+        {sessionsLoading && <div className="state-box">Loading class sessions...</div>}
+        {!sessionsLoading && sessions.length === 0 && <div className="state-box">No class sessions on this date.</div>}
+        {sessions.length > 0 && (
+          <div className="session-card-grid" aria-label="Class sessions for selected date">
+            {sessions.map((session) => {
+              const isSelected = classSessionIdValue(session) === Number(classSessionId)
+              const isCancelled = session.status === 'Cancelled'
+              return (
+                <button
+                  key={classSessionIdValue(session)}
+                  className={`session-card status-${session.status.toLowerCase()}${isSelected ? ' active' : ''}`}
+                  type="button"
+                  disabled={isCancelled}
+                  onClick={() => selectSession(session)}
+                >
+                  <span>
+                    <strong>{formatTime(session.startTime)} - {formatTime(session.endTime)}</strong>
+                    <StatusBadge value={session.status} />
+                  </span>
+                  <span>{session.batchCode} - {session.courseName || '-'}</span>
+                  <small>{session.instructorName || '-'} - {session.room || 'No room'} - {session.deliveryMode}</small>
+                </button>
+              )
+            })}
+          </div>
+        )}
+        {selectedSession?.status === 'Cancelled' && <Alert tone="warning" message="This class session is cancelled, so attendance marking is disabled." />}
+        {selectedSession && selectedSession.status === 'Completed' && <Alert tone="warning" message="This class session is completed. Saving again may update existing attendance." />}
+        {selectedSession && (
+          <div className="attendance-tools">
+            <div className="attendance-counts">
+              <span><strong>{attendanceCounts.Present}</strong> Present</span>
+              <span><strong>{attendanceCounts.Absent}</strong> Absent</span>
+              <span><strong>{attendanceCounts.Late}</strong> Late</span>
+              <span><strong>{attendanceCounts.Total}</strong> Total</span>
+            </div>
+            <div className="toolbar inline-controls">
+              <button className="secondary-button" type="button" onClick={() => markAll('Present')} disabled={trainees.length === 0}>
+                Mark all present
+              </button>
+              <button className="secondary-button" type="button" onClick={() => markAll('Absent')} disabled={trainees.length === 0}>
+                Mark all absent
+              </button>
+              <button className="secondary-button" type="button" onClick={() => markAll('Late')} disabled={trainees.length === 0}>
+                Mark all late
+              </button>
+              <label className="control roster-search">
+                <span>Search roster</span>
+                <input value={rosterSearch} onChange={(event) => setRosterSearch(event.target.value)} placeholder="Name or phone" />
+              </label>
+            </div>
+          </div>
+        )}
         <DataTable
-          loading={loading}
-          emptyText={batchId ? 'No enrolled trainees found for this batch.' : 'Select a batch to load trainees.'}
+          loading={traineesLoading}
+          emptyText={
+            rosterSearch.trim()
+              ? 'No trainees match the current roster search.'
+              : classSessionId
+                ? 'No enrolled trainees found for this session batch.'
+                : 'Select a class session to load enrolled trainees.'
+          }
           columns={['Trainee', 'Phone', 'Status']}
-          rows={trainees.map((trainee) => [
+          rows={visibleTrainees.map((trainee) => [
             <strong>{personName(trainee)}</strong>,
             trainee.phone,
             <Segmented
@@ -1484,7 +1852,7 @@ function AttendancePage({ refreshToken }: { refreshToken: number }) {
           ])}
         />
         <div className="form-actions">
-          <button className="primary-button" type="submit" disabled={!batchId || trainees.length === 0}>
+          <button className="primary-button" type="submit" disabled={!selectedSession || selectedSession.status === 'Cancelled' || trainees.length === 0}>
             Submit attendance
           </button>
         </div>
@@ -1733,6 +2101,20 @@ function ModalContent({
             onSubmit={(body) => run(() => modal.item ? api.schedules.update(scheduleIdValue(modal.item), body) : api.schedules.create(body))}
           />
         )}
+        {modal.type === 'classSession' && (
+          <ClassSessionForm
+            item={modal.item}
+            sourceSchedule={modal.schedule}
+            schedules={refs.schedules}
+            onSubmit={(body) =>
+              run(() =>
+                modal.item
+                  ? api.classSessions.update(classSessionIdValue(modal.item), body as UpdateClassSessionRequest)
+                  : api.classSessions.create(body as CreateClassSessionRequest),
+              )
+            }
+          />
+        )}
         {modal.type === 'certificate' && (
           <CertificateForm
             trainees={refs.trainees}
@@ -1772,6 +2154,7 @@ function modalTitle(modal: Exclude<ModalState, null>) {
   if (modal.type === 'certificate') return 'Generate certificate'
   if (modal.type === 'user') return modal.item ? 'Edit user' : 'Create user'
   if (modal.type === 'tenant') return `${modal.item ? 'Edit' : 'Create'} tenant`
+  if (modal.type === 'classSession') return `${modal.item ? 'Edit' : 'Create'} class session`
   return `${modal.item ? 'Edit' : 'Create'} ${modal.type}`
 }
 
@@ -1779,6 +2162,7 @@ function referenceKindsForModal(modal: ModalState): ReferenceKind[] {
   if (!modal) return []
   if (modal.type === 'batch') return ['courses', 'instructors']
   if (modal.type === 'schedule') return ['batches']
+  if (modal.type === 'classSession') return ['schedules']
   if (modal.type === 'certificate') return ['trainees', 'courses', 'batches']
   if (modal.type === 'batchTrainees') return ['trainees']
   return []
@@ -1971,6 +2355,147 @@ function ScheduleForm({
       </Field>
       <TextField name="room" label="Room" defaultValue={item?.room ?? ''} required={deliveryMode === 'InPerson'} />
       <SelectField name="status" label="Status" defaultValue={item?.status ?? 'Active'} options={scheduleStatuses} />
+      <Field label="Notes">
+        <textarea name="notes" defaultValue={item?.notes ?? ''} rows={4} />
+      </Field>
+    </RecordForm>
+  )
+}
+
+function ClassSessionForm({
+  item,
+  sourceSchedule,
+  schedules,
+  onSubmit,
+}: {
+  item?: ClassSession
+  sourceSchedule?: Schedule
+  schedules: Schedule[]
+  onSubmit: (body: CreateClassSessionRequest | UpdateClassSessionRequest) => void
+}) {
+  const initialSchedule = sourceSchedule ?? schedules.find((schedule) => scheduleIdValue(schedule) === item?.scheduleId)
+  const availableSchedules = sourceSchedule
+    ? [sourceSchedule, ...schedules.filter((schedule) => scheduleIdValue(schedule) !== scheduleIdValue(sourceSchedule))]
+    : schedules
+  const [scheduleId, setScheduleId] = useState(String(item?.scheduleId ?? (initialSchedule ? scheduleIdValue(initialSchedule) : '')))
+  const selectedSchedule = availableSchedules.find((schedule) => String(scheduleIdValue(schedule)) === scheduleId) ?? initialSchedule
+  const [startTime, setStartTime] = useState(timeInputValue(item?.startTime ?? selectedSchedule?.startTime, ''))
+  const [endTime, setEndTime] = useState(timeInputValue(item?.endTime ?? selectedSchedule?.endTime, ''))
+  const [room, setRoom] = useState(item?.room ?? selectedSchedule?.room ?? '')
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(item?.deliveryMode ?? selectedSchedule?.deliveryMode ?? 'InPerson')
+  const [formError, setFormError] = useState('')
+
+  const chooseSchedule = (value: string) => {
+    setScheduleId(value)
+    const schedule = availableSchedules.find((candidate) => String(scheduleIdValue(candidate)) === value)
+    if (!item && schedule) {
+      setStartTime(timeInputValue(schedule.startTime, ''))
+      setEndTime(timeInputValue(schedule.endTime, ''))
+      setRoom(schedule.room ?? '')
+      setDeliveryMode(schedule.deliveryMode)
+    }
+  }
+
+  return (
+    <RecordForm
+      submitLabel={item ? 'Save class session' : 'Create class session'}
+      onSubmit={(data) => {
+        const submittedScheduleId = Number(data.get('scheduleId'))
+        const sessionDate = String(data.get('sessionDate') || '')
+        const submittedStartTime = timeForApi(data.get('startTime'))
+        const submittedEndTime = timeForApi(data.get('endTime'))
+        const submittedRoom = String(data.get('room') ?? '').trim()
+        const mode = String(data.get('deliveryMode') || 'InPerson') as DeliveryMode
+        const status = String(data.get('status') || 'Scheduled') as ClassSessionStatus
+
+        if (!submittedScheduleId || !sessionDate) {
+          setFormError('Schedule and session date are required.')
+          return
+        }
+
+        if (submittedStartTime && submittedEndTime && submittedEndTime <= submittedStartTime) {
+          setFormError('End time must be after start time.')
+          return
+        }
+
+        if (mode === 'InPerson' && !submittedRoom) {
+          setFormError('Room is required for in-person sessions.')
+          return
+        }
+
+        setFormError('')
+
+        if (item) {
+          onSubmit({
+            sessionDate,
+            startTime: submittedStartTime,
+            endTime: submittedEndTime,
+            deliveryMode: mode,
+            room: submittedRoom || null,
+            status,
+            notes: nullable(data.get('notes')),
+          })
+          return
+        }
+
+        onSubmit({
+          scheduleId: submittedScheduleId,
+          sessionDate,
+          startTime: submittedStartTime || undefined,
+          endTime: submittedEndTime || undefined,
+          deliveryMode: mode,
+          room: submittedRoom || null,
+          status,
+          notes: nullable(data.get('notes')),
+        })
+      }}
+    >
+      {formError && <Alert tone="error" message={formError} />}
+      <Field label="Schedule">
+        <select name="scheduleId" value={scheduleId} onChange={(event) => chooseSchedule(event.target.value)} required>
+          <option value="" disabled>
+            Select schedule
+          </option>
+          {availableSchedules.map((schedule) => {
+            const option = optionFromSchedule(schedule)
+            return (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            )
+          })}
+        </select>
+      </Field>
+      {selectedSchedule && (
+        <div className="state-box">
+          <strong>{selectedSchedule.batchCode || 'Selected schedule'}</strong> - {selectedSchedule.dayOfWeek} from {formatTime(selectedSchedule.startTime)} to {formatTime(selectedSchedule.endTime)} - {selectedSchedule.room || 'No room'} - {selectedSchedule.deliveryMode}
+        </div>
+      )}
+      <TextField name="sessionDate" label="Session date" type="date" defaultValue={dateValue(item?.sessionDate) || today()} required />
+      <Field label="Start time">
+        <input name="startTime" type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} required />
+      </Field>
+      <Field label="End time">
+        <input name="endTime" type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} required />
+      </Field>
+      <Field label="Delivery mode">
+        <select
+          name="deliveryMode"
+          value={deliveryMode}
+          onChange={(event) => setDeliveryMode(event.target.value as DeliveryMode)}
+          required
+        >
+          {deliveryModes.map((mode) => (
+            <option key={mode} value={mode}>
+              {mode}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Room">
+        <input name="room" value={room} onChange={(event) => setRoom(event.target.value)} required={deliveryMode === 'InPerson'} />
+      </Field>
+      <SelectField name="status" label="Status" defaultValue={item?.status ?? 'Scheduled'} options={classSessionStatuses} />
       <Field label="Notes">
         <textarea name="notes" defaultValue={item?.notes ?? ''} rows={4} />
       </Field>
@@ -2351,8 +2876,8 @@ function TraineeProfile({ trainee }: { trainee: Trainee }) {
         <DataTable
           loading={loading}
           emptyText="No attendance records found."
-          columns={['Batch', 'Date', 'Status']}
-          rows={attendance.items.map((item) => [item.batchCode, formatDate(item.date), <StatusBadge value={item.status} />])}
+          columns={['Session', 'Batch', 'Date', 'Status']}
+          rows={attendance.items.map((item) => [item.classSessionId || '-', item.batchCode, formatDate(item.date), <StatusBadge value={item.status} />])}
         />
       </section>
       <section className="profile-section">
@@ -2393,8 +2918,8 @@ function TraineeHistory({ trainee, tab }: { trainee: Trainee; tab: 'attendance' 
         <DataTable
           loading={loading}
           emptyText="No attendance records found."
-          columns={['Batch', 'Date', 'Status']}
-          rows={attendance.items.map((item) => [item.batchCode, formatDate(item.date), <StatusBadge value={item.status} />])}
+          columns={['Session', 'Batch', 'Date', 'Status']}
+          rows={attendance.items.map((item) => [item.classSessionId || '-', item.batchCode, formatDate(item.date), <StatusBadge value={item.status} />])}
         />
       ) : (
         <DataTable
@@ -2743,7 +3268,7 @@ function StatusToggle({
 function RowActions({
   actions,
 }: {
-  actions: { label: string; onClick: () => void; danger?: boolean }[]
+  actions: { label: string; onClick: () => void; danger?: boolean; disabled?: boolean }[]
 }) {
   return (
     <div className="row-actions">
@@ -2752,6 +3277,7 @@ function RowActions({
           key={action.label}
           className={action.danger ? 'danger-button' : 'ghost-button'}
           type="button"
+          disabled={action.disabled}
           onClick={action.onClick}
         >
           {action.label}
@@ -2887,6 +3413,13 @@ function optionFromCode(item: Batch) {
   return { value: item.id, label: item.code }
 }
 
+function optionFromSchedule(item: Schedule) {
+  return {
+    value: scheduleIdValue(item),
+    label: `${item.batchCode || 'Batch'} - ${item.dayOfWeek} ${formatTime(item.startTime)}-${formatTime(item.endTime)}`,
+  }
+}
+
 function nullable(value: FormDataEntryValue | null) {
   const text = String(value ?? '').trim()
   return text ? text : null
@@ -2897,3 +3430,4 @@ function dateValue(value?: string) {
 }
 
 export default App
+
