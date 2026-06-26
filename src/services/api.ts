@@ -5,12 +5,14 @@ import type {
   Batch,
   BatchStatusCounts,
   Certificate,
+  CertificateSettings,
   ClassSession,
   CreateClassSessionRequest,
   CreateTenantRequest,
   CreateUserRequest,
   Course,
   DashboardSummary,
+  GenerateCertificateRequest,
   Instructor,
   PagedResult,
   Schedule,
@@ -20,8 +22,9 @@ import type {
   UpdateClassSessionRequest,
   UpdateUserRequest,
   UserAccount,
+  VerifyCertificateResult,
 } from '../types'
-import { apiBaseUrl, request } from './request'
+import { apiBaseUrl, downloadRequest, publicRequest, request } from './request'
 
 type QueryValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryValue>
@@ -56,6 +59,15 @@ const putJson = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 })
 
+const formFile = (file: File): RequestInit => {
+  const body = new FormData()
+  body.set('file', file)
+  return {
+    method: 'POST',
+    body,
+  }
+}
+
 function classSessionQuery(params: ClassSessionQueryParams) {
   return {
     Page: params.page,
@@ -70,6 +82,18 @@ function classSessionQuery(params: ClassSessionQueryParams) {
 
 export const api = {
   baseUrl: apiBaseUrl,
+  listCertificates: (params: QueryParams) => request<PagedResult<Certificate>>(`/api/certificates${toQuery(params)}`),
+  getCertificate: (id: number) => request<Certificate>(`/api/certificates/${id}`),
+  generateCertificate: (body: GenerateCertificateRequest) => request<Certificate>('/api/certificates/generate', json(body)),
+  revokeCertificate: (id: number, reason: string) => request<Certificate>(`/api/certificates/${id}/revoke`, json({ reason })),
+  downloadCertificate: (id: number) => downloadRequest(`/api/certificates/${id}/download`),
+  getCertificateSettings: () => request<CertificateSettings>('/api/certificate-settings'),
+  updateCertificateSettings: (body: CertificateSettings) => request<CertificateSettings>('/api/certificate-settings', putJson(body)),
+  uploadCertificateLogo: (file: File) => request<CertificateSettings>('/api/certificate-settings/logo', formFile(file)),
+  uploadCertificateStamp: (file: File) => request<CertificateSettings>('/api/certificate-settings/stamp', formFile(file)),
+  uploadCertificateSignature: (file: File) => request<CertificateSettings>('/api/certificate-settings/signature', formFile(file)),
+  verifyCertificatePublic: (token: string) =>
+    publicRequest<VerifyCertificateResult>(`/api/public/certificates/verify/${encodeURIComponent(token)}`),
   dashboard: {
     summary: () => request<DashboardSummary>('/api/dashboard/summary'),
     totalTrainees: () => request<number>('/api/dashboard/total-trainees'),
@@ -152,7 +176,18 @@ export const api = {
   certificates: {
     list: (params: QueryParams) => request<PagedResult<Certificate>>(`/api/certificates${toQuery(params)}`),
     get: (id: number) => request<Certificate>(`/api/certificates/${id}`),
-    create: (body: Partial<Certificate>) => request<Certificate>('/api/certificates', json(body)),
+    generate: (body: GenerateCertificateRequest) => request<Certificate>('/api/certificates/generate', json(body)),
+    revoke: (id: number, reason: string) => request<Certificate>(`/api/certificates/${id}/revoke`, json({ reason })),
+    download: (id: number) => downloadRequest(`/api/certificates/${id}/download`),
+    verifyPublic: (token: string) =>
+      publicRequest<VerifyCertificateResult>(`/api/public/certificates/verify/${encodeURIComponent(token)}`),
+  },
+  certificateSettings: {
+    get: () => request<CertificateSettings>('/api/certificate-settings'),
+    update: (body: CertificateSettings) => request<CertificateSettings>('/api/certificate-settings', putJson(body)),
+    uploadLogo: (file: File) => request<CertificateSettings>('/api/certificate-settings/logo', formFile(file)),
+    uploadStamp: (file: File) => request<CertificateSettings>('/api/certificate-settings/stamp', formFile(file)),
+    uploadSignature: (file: File) => request<CertificateSettings>('/api/certificate-settings/signature', formFile(file)),
   },
   users: {
     list: (params?: QueryParams) => request<UserAccount[] | PagedResult<UserAccount>>(`/api/users${toQuery(params)}`),

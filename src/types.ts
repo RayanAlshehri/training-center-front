@@ -4,6 +4,7 @@ export type AttendanceStatus = 'Present' | 'Absent' | 'Late'
 export type DeliveryMode = 'InPerson' | 'Online' | 'Hybrid'
 export type ScheduleStatus = 'Active' | 'Inactive'
 export type ClassSessionStatus = 'Scheduled' | 'Cancelled' | 'Completed'
+export type CertificateStatus = 'Issued' | 'Revoked'
 export type DayOfWeek =
   | 'Sunday'
   | 'Monday'
@@ -19,6 +20,7 @@ export const attendanceStatuses: AttendanceStatus[] = ['Present', 'Absent', 'Lat
 export const deliveryModes: DeliveryMode[] = ['InPerson', 'Online', 'Hybrid']
 export const scheduleStatuses: ScheduleStatus[] = ['Active', 'Inactive']
 export const classSessionStatuses: ClassSessionStatus[] = ['Scheduled', 'Cancelled', 'Completed']
+export const certificateStatuses: CertificateStatus[] = ['Issued', 'Revoked']
 export const daysOfWeek: DayOfWeek[] = [
   'Sunday',
   'Monday',
@@ -167,14 +169,55 @@ export interface AttendanceRecord {
 export interface Certificate {
   id: number
   certificateNumber: string
+  status?: CertificateStatus
   traineeId: number
   traineeName: string
   courseId: number
   courseName: string
   batchId: number
   batchCode: string
+  trainingHours?: number
   issueDate: string
   completionDate: string
+  issuedBy?: string | null
+  verificationToken?: string | null
+  verificationUrl?: string | null
+  qrCodeUrl?: string | null
+  revokedAt?: string | null
+  revokedBy?: string | null
+  revocationReason?: string | null
+  pdfUrl?: string | null
+}
+
+export interface GenerateCertificateRequest {
+  batchId: number
+  traineeId: number
+  completionDate: string
+  trainingHours?: number
+}
+
+export interface CertificateSettings {
+  centerDisplayName: string
+  certificatePrefix: string
+  defaultCertificateTitle: string
+  logoUrl?: string | null
+  stampUrl?: string | null
+  signatureUrl?: string | null
+  signatoryName: string
+  signatoryTitle: string
+}
+
+export interface VerifyCertificateResult {
+  status?: CertificateStatus | 'NotFound'
+  certificateNumber?: string
+  trainingCenterName?: string
+  centerDisplayName?: string
+  traineeName?: string
+  courseName?: string
+  trainingHours?: number
+  completionDate?: string
+  issueDate?: string
+  revokedAt?: string | null
 }
 
 export interface UserAccount {

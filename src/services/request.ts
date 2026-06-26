@@ -81,7 +81,7 @@ function headersWithAuth(init?: RequestInit) {
     headers.set('Accept', 'application/json')
   }
 
-  if (init?.body && !headers.has('Content-Type')) {
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
 
@@ -196,4 +196,91 @@ export async function request<T>(
   }
 
   return payload as T
+}
+
+export async function publicRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json')
+  }
+
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers,
+  })
+
+  if (response.status === 204) {
+    return undefined as T
+  }
+
+  const payload = await readPayload(response)
+
+  if (!response.ok) {
+    const details =
+      typeof payload === 'object' && payload !== null
+        ? (payload as ProblemDetails)
+        : undefined
+
+    throw createApiError(
+      friendlyStatusMessage(
+        response.status,
+        details
+          ? problemMessage(details, `Request failed with status ${response.status}`)
+          : String(payload),
+      ),
+      response.status,
+      details,
+    )
+  }
+
+  return payload as T
+}
+
+export async function downloadRequest(path: string, init?: RequestInit, isRetry = false): Promise<Blob> {
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers: headersWithAuth({
+      ...init,
+      headers: {
+        Accept: 'application/pdf',
+        ...Object.fromEntries(new Headers(init?.headers).entries()),
+      },
+    }),
+  })
+
+  if (response.status === 401 && !isRetry) {
+    try {
+      await getFreshTokens()
+      return downloadRequest(path, init, true)
+    } catch {
+      signOutAfterRefreshFailure()
+      throw new Error('Session expired or the tenant is suspended. Please sign in again or contact your administrator.')
+    }
+  }
+
+  if (!response.ok) {
+    const payload = await readPayload(response)
+    const details =
+      typeof payload === 'object' && payload !== null
+        ? (payload as ProblemDetails)
+        : undefined
+
+    throw createApiError(
+      friendlyStatusMessage(
+        response.status,
+        details
+          ? problemMessage(details, `Request failed with status ${response.status}`)
+          : String(payload),
+      ),
+      response.status,
+      details,
+    )
+  }
+
+  return response.blob()
 }
