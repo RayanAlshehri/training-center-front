@@ -187,8 +187,12 @@ export interface UserAccount {
   LastName?: string
   fullName?: string
   FullName?: string
+  phone?: string
+  Phone?: string
   email: string
   Email?: string
+  roleId?: number
+  RoleId?: number
   roleName?: string
   RoleName?: string
   role?: string
@@ -199,11 +203,16 @@ export interface UserAccount {
   TenantName?: string | null
   isActive: boolean
   IsActive?: boolean
+  createdAt?: string
+  CreatedAt?: string
+  updatedAt?: string
+  UpdatedAt?: string
 }
 
 export interface CreateUserRequest {
   firstName: string
   lastName: string
+  phone: string
   email: string
   password: string
   roleName: string
@@ -214,6 +223,7 @@ export interface CreateUserRequest {
 export interface UpdateUserRequest {
   firstName: string
   lastName: string
+  phone: string
   email: string
   roleName: string
   tenantId?: number | string | null

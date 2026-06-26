@@ -155,7 +155,7 @@ export const api = {
     create: (body: Partial<Certificate>) => request<Certificate>('/api/certificates', json(body)),
   },
   users: {
-    list: () => request<UserAccount[] | PagedResult<UserAccount>>('/api/users'),
+    list: (params?: QueryParams) => request<UserAccount[] | PagedResult<UserAccount>>(`/api/users${toQuery(params)}`),
     get: (id: number) => request<UserAccount>(`/api/users/${id}`),
     roles: () => request<string[]>('/api/users/roles'),
     create: (body: CreateUserRequest) => request<UserAccount>('/api/users', json(body)),

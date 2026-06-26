@@ -68,6 +68,7 @@ type ModalState =
 type TraineeSearchField = 'fullName' | 'phone' | 'nationalId'
 type CourseSearchField = 'code' | 'name'
 type InstructorSearchField = 'fullName' | 'phone'
+type UserSearchField = 'fullName' | 'email' | 'phone'
 
 const traineeSearchFields: { value: TraineeSearchField; label: string }[] = [
   { value: 'fullName', label: 'Name' },
@@ -82,6 +83,12 @@ const courseSearchFields: { value: CourseSearchField; label: string }[] = [
 
 const instructorSearchFields: { value: InstructorSearchField; label: string }[] = [
   { value: 'fullName', label: 'Name' },
+  { value: 'phone', label: 'Phone' },
+]
+
+const userSearchFields: { value: UserSearchField; label: string }[] = [
+  { value: 'fullName', label: 'Full name' },
+  { value: 'email', label: 'Email' },
   { value: 'phone', label: 'Phone' },
 ]
 
@@ -405,6 +412,14 @@ function userRole(user: UserAccount) {
 
 function userEmail(user: UserAccount) {
   return stringField(recordFrom(user), 'email', 'Email')
+}
+
+function userPhone(user: UserAccount) {
+  return stringField(recordFrom(user), 'phone', 'Phone') || '-'
+}
+
+function userPhoneValue(user?: UserAccount) {
+  return user ? stringField(recordFrom(user), 'phone', 'Phone') : ''
 }
 
 function userId(user: UserAccount) {
@@ -1975,10 +1990,23 @@ function UsersPage({
   refreshToken: number
   canManage: boolean
 }) {
+  const [search, setSearch] = useState('')
+  const [searchField, setSearchField] = useState<UserSearchField>('fullName')
+  const [page, setPage] = useState(1)
   const { data, loading, error } = usePagedData(
-    () => api.users.list().then(usersPageFrom),
-    [refreshToken],
+    () => api.users.list({ search, searchField, page, pageSize: 20 }).then(usersPageFrom),
+    [search, searchField, page, refreshToken],
   )
+
+  const updateSearch = (value: string) => {
+    setSearch(value)
+    setPage(1)
+  }
+
+  const updateSearchField = (value: string) => {
+    setSearchField(value as UserSearchField)
+    setPage(1)
+  }
 
   return (
     <section className="panel">
@@ -1988,15 +2016,24 @@ function UsersPage({
         onAction={() => onModal({ type: 'user' })}
         disabled={!canManage}
       />
+      <ListToolbar
+        search={search}
+        onSearch={updateSearch}
+        searchPlaceholder={`Search by ${userSearchFields.find((item) => item.value === searchField)?.label.toLowerCase()}`}
+        beforeSearch={
+          <Select value={searchField} onChange={updateSearchField} label="Search by" options={userSearchFields} includeAllOption={false} />
+        }
+      />
       {!canManage && <Alert tone="warning" message="You need Users.Manage permission to create users or change role/status." />}
       {error && <Alert tone="error" message={error} />}
       <DataTable
         loading={loading}
-        emptyText="No users found."
-        columns={['Name', 'Email', 'Role', 'Tenant', 'Status', 'Actions']}
+        emptyText="No users match the current filters."
+        columns={['Name', 'Email', 'Phone', 'Role', 'Tenant', 'Status', 'Actions']}
         rows={data.items.map((item) => [
             <strong>{userDisplayName(item)}</strong>,
             userEmail(item),
+            userPhone(item),
             userRole(item),
             userTenantName(item) || '-',
             <StatusBadge value={userIsActive(item) ? 'Active' : 'Inactive'} />,
@@ -2007,7 +2044,7 @@ function UsersPage({
             ),
           ])}
       />
-      <Pagination data={data} onPage={() => undefined} />
+      <Pagination data={data} onPage={setPage} />
     </section>
   )
 }
@@ -2124,10 +2161,10 @@ function ModalContent({
           />
         )}
         {modal.type === 'user' && (
-          <UserForm
+          <UserModalForm
             item={modal.item}
-            onSubmit={(body) =>
-              run(() => modal.item ? api.users.update(userId(modal.item), body as UpdateUserRequest) : api.users.create(body as CreateUserRequest))
+            onSubmit={(userItem, body) =>
+              run(() => userItem ? api.users.update(userId(userItem), body as UpdateUserRequest) : api.users.create(body as CreateUserRequest))
             }
           />
         )}
@@ -2573,6 +2610,47 @@ function TenantForm({ item, onSubmit }: { item?: Tenant; onSubmit: (body: { name
   )
 }
 
+function UserModalForm({
+  item,
+  onSubmit,
+}: {
+  item?: UserAccount
+  onSubmit: (item: UserAccount | undefined, body: CreateUserRequest | UpdateUserRequest) => void
+}) {
+  const [loadedItem, setLoadedItem] = useState<UserAccount | undefined>(() => (item ? undefined : item))
+  const [loading, setLoading] = useState(Boolean(item))
+  const [error, setError] = useState('')
+  const editUserId = item ? userId(item) : 0
+
+  useEffect(() => {
+    if (!item) {
+      setLoadedItem(undefined)
+      setLoading(false)
+      setError('')
+      return
+    }
+
+    setLoading(true)
+    setError('')
+    api.users
+      .get(editUserId)
+      .then((result) => setLoadedItem(result))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [editUserId, item])
+
+  if (loading) return <div className="state-box">Loading user...</div>
+  if (error) return <Alert tone="error" message={error} />
+
+  return (
+    <UserForm
+      key={loadedItem ? userId(loadedItem) : 'new-user'}
+      item={loadedItem}
+      onSubmit={(body) => onSubmit(loadedItem, body)}
+    />
+  )
+}
+
 function UserForm({
   item,
   onSubmit,
@@ -2625,6 +2703,7 @@ function UserForm({
         const body = {
           firstName: String(data.get('firstName')),
           lastName: String(data.get('lastName')),
+          phone: String(data.get('phone')),
           email: String(data.get('email')),
           roleName: selectedRole,
           ...(isSuperAdmin && isTenantRole(selectedRole) ? { tenantId } : {}),
@@ -2645,6 +2724,7 @@ function UserForm({
       {tenantError && <Alert tone="error" message={tenantError} />}
       <TextField name="firstName" label="First name" defaultValue={firstNameFromUser(item)} required />
       <TextField name="lastName" label="Last name" defaultValue={lastNameFromUser(item)} required />
+      <TextField name="phone" label="Phone" defaultValue={userPhoneValue(item)} required />
       <TextField name="email" label="Email" type="email" defaultValue={item ? userEmail(item) : ''} required />
       {!item && <TextField name="password" label="Password" type="password" required />}
       <Field label="Role">
@@ -2947,8 +3027,8 @@ function ListToolbar({
   onSearch: (value: string) => void
   searchPlaceholder?: string
   beforeSearch?: React.ReactNode
-  status: string
-  onStatus: (value: string) => void
+  status?: string
+  onStatus?: (value: string) => void
   statuses?: string[]
   children?: React.ReactNode
 }) {
@@ -2956,7 +3036,9 @@ function ListToolbar({
     <div className="toolbar">
       {beforeSearch}
       <SearchInput value={search} onChange={onSearch} placeholder={searchPlaceholder} />
-      <Select value={status} onChange={onStatus} label="Status" options={statuses.map((item) => ({ value: item, label: item }))} />
+      {status !== undefined && onStatus && (
+        <Select value={status} onChange={onStatus} label="Status" options={statuses.map((item) => ({ value: item, label: item }))} />
+      )}
       {children}
     </div>
   )
